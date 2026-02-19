@@ -18,11 +18,13 @@ try:
     from watchdog.observers import Observer
     from watchdog.events import FileSystemEventHandler
     WATCHDOG_AVAILABLE = True
+    _EventHandlerBase = FileSystemEventHandler
 except ImportError:
     WATCHDOG_AVAILABLE = False
+    _EventHandlerBase = object
 
 
-class ConfigReloadHandler(FileSystemEventHandler):
+class ConfigReloadHandler(_EventHandlerBase):
     """Обработчик событий файловой системы для hot-reload."""
     
     def __init__(self, callback: Callable, config_path: Path, env_path: Path):
