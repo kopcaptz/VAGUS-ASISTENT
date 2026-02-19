@@ -5,9 +5,14 @@ FastAPI dependencies — внедрение зависимостей.
 
 from typing import Any, Dict
 
-from fastapi import Request
+from fastapi import Depends, HTTPException, Request
+from fastapi.security import OAuth2PasswordBearer
 
 from vagus.layer2.orchestrator import TaskOrchestrator
+
+from .auth import decode_access_token
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
 
 
 def get_orchestrator(request: Request) -> TaskOrchestrator:
@@ -20,9 +25,23 @@ def get_task_store(request: Request) -> Dict[str, Any]:
     return request.app.state.task_store
 
 
-def get_current_user(request: Request) -> Any:
+def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any]:
     """
-    Возвращает текущего пользователя.
-    Пока без аутентификации — всегда None (все запросы разрешены).
+    Возвращает текущего пользователя из JWT.
+    Вызывает 401 при невалидном или отсутствующем токене.
     """
-    return None
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    username = payload.get("sub")
+    if not username:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid token payload",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return {"sub": username, "username": username}
