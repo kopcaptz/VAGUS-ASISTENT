@@ -130,3 +130,33 @@ def test_error_analytics_endpoint_returns_snapshot(app, client, admin_headers):
     assert "top_error_sources" in payload
     assert "correlation" in payload
     assert "recent_events" in payload
+
+
+def test_dead_letter_queue_retry_requires_prompt_when_payload_missing(app, client, admin_headers):
+    app.state.dead_letter_queue.add_failed_task(
+        task_id="dlq-4",
+        agent_type="analyst",
+        error_message="timeout",
+        stack_trace="trace",
+        retry_count=0,
+        task_payload={"task_type": "analysis"},
+    )
+    response = client.post(
+        "/api/v1/admin/dead-letter-queue/dlq-4/retry",
+        json={},
+        headers=admin_headers,
+    )
+    assert response.status_code == 400
+
+
+def test_circuit_breaker_reset_not_found_returns_404(client, admin_headers):
+    response = client.post(
+        "/api/v1/admin/circuit-breakers/nonexistent/reset",
+        headers=admin_headers,
+    )
+    assert response.status_code == 404
+
+
+def test_error_analytics_requires_admin(client, user_headers):
+    response = client.get("/api/v1/admin/error-analytics", headers=user_headers)
+    assert response.status_code == 403
