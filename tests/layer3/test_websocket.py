@@ -147,7 +147,93 @@ def test_websocket_message_too_big_closes_with_1009(client, app, admin_token):
     huge_message = "x" * (1024 * 1024 + 16)
 
     with client.websocket_connect(_ws_url("ws-test-big-message", admin_token)) as ws:
+        ws.send_text(huge_message)
         with pytest.raises(WebSocketDisconnect) as exc:
-            ws.send_text(huge_message)
-            ws.receive_json()
+            for _ in range(30):
+                ws.receive_json()
     assert exc.value.code == 1009
+
+
+def test_websocket_invalid_token_value_closed_with_1008(client):
+    with client.websocket_connect("/api/v1/tasks/ws/invalid-token-task?token=not-a-jwt") as ws:
+        with pytest.raises(WebSocketDisconnect) as exc:
+            ws.receive_json()
+    assert exc.value.code == 1008
+
+
+def test_websocket_accepts_token_in_authorization_header(client, admin_token):
+    _task("ws-header-auth", TaskStatus.COMPLETED, result={"content": "ok"})
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
+    with client.websocket_connect("/api/v1/tasks/ws/ws-header-auth", headers=headers) as ws:
+        payload = ws.receive_json()
+        assert payload["done"] is True
+        assert "ok" in payload["content"]
+
+
+def test_websocket_accepts_json_pong(client, app, admin_token):
+    _set_websocket_settings(
+        app,
+        ping_interval_seconds=1,
+        ping_timeout_seconds=4,
+        status_poll_interval_seconds=0.2,
+    )
+    _task("ws-json-pong", TaskStatus.PENDING)
+
+    with client.websocket_connect(_ws_url("ws-json-pong", admin_token)) as ws:
+        for _ in range(20):
+            message = ws.receive_json()
+            if message.get("type") == "ping":
+                ws.send_json({"type": "pong"})
+                break
+        else:
+            pytest.fail("Expected ping was not received")
+
+        follow_up = ws.receive_json()
+        assert follow_up.get("type") == "ping" or "done" in follow_up
+
+
+def test_websocket_completed_task_serializes_string_result(client, admin_token):
+    _task("ws-string-result", TaskStatus.COMPLETED, result="plain-result")
+
+    with client.websocket_connect(_ws_url("ws-string-result", admin_token)) as ws:
+        payload = ws.receive_json()
+        assert payload["done"] is True
+        assert payload["content"] == "plain-result"
+
+
+def test_websocket_binary_message_too_big_closes_with_1009(client, app, admin_token):
+    _set_websocket_settings(
+        app,
+        max_message_size_mb=1,
+        ping_interval_seconds=10,
+        ping_timeout_seconds=20,
+        status_poll_interval_seconds=0.2,
+    )
+    _task("ws-test-big-binary", TaskStatus.PENDING)
+    huge_binary = b"x" * (1024 * 1024 + 32)
+
+    with client.websocket_connect(_ws_url("ws-test-big-binary", admin_token)) as ws:
+        ws.send_bytes(huge_binary)
+        with pytest.raises(WebSocketDisconnect) as exc:
+            for _ in range(30):
+                ws.receive_json()
+    assert exc.value.code == 1009
+
+
+def test_websocket_rate_limit_with_json_messages_closes_1013(client, app, admin_token):
+    _set_websocket_settings(
+        app,
+        max_messages_per_minute=3,
+        ping_interval_seconds=10,
+        ping_timeout_seconds=20,
+        status_poll_interval_seconds=0.2,
+    )
+    _task("ws-test-json-rate-limit", TaskStatus.PENDING)
+
+    with client.websocket_connect(_ws_url("ws-test-json-rate-limit", admin_token)) as ws:
+        with pytest.raises(WebSocketDisconnect) as exc:
+            for _ in range(20):
+                ws.send_json({"type": "pong"})
+                ws.receive_json()
+    assert exc.value.code == 1013
