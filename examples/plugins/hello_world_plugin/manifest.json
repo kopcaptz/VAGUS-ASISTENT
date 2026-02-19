@@ -1,0 +1,21 @@
+{
+  "name": "hello_world_plugin",
+  "version": "1.0.0",
+  "author": "Vagus Team",
+  "description": "Example plugin that modifies incoming messages",
+  "dependencies": [],
+  "python_version": ">=3.10",
+  "vagus_version": ">=0.1.0",
+  "entry_point": "plugin:HelloWorldPlugin",
+  "hooks": [
+    {
+      "name": "on_message_received",
+      "priority": 80,
+      "callback": "HelloWorldPlugin.on_message_received",
+      "is_async": false
+    }
+  ],
+  "permissions": [
+    "messages:read"
+  ]
+}
