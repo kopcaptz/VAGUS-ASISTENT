@@ -16,6 +16,8 @@ from vagus.layer3.api.health import HealthThresholds, health_router
 from vagus.layer3.api.metrics import HTTPMetricsMiddleware, metrics_router
 from vagus.layer3.api.routers.tasks import task_store
 from vagus.layer3.api.websocket_security import WebSocketAuditStorage, WebSocketRuntimeSettings
+from vagus.layer2.dead_letter_queue import DeadLetterQueueStorage
+from vagus.monitoring.error_analytics import ErrorAnalyticsStorage
 
 
 def _make_mock_orchestrator():
@@ -100,6 +102,12 @@ def app(tmp_path):
     test_app.state.audit_trail = AuditTrail(str(tmp_path / "audit_trail.db"))
     test_app.state.websocket_audit_storage = WebSocketAuditStorage(
         str(tmp_path / "websocket_audit.db")
+    )
+    test_app.state.dead_letter_queue = DeadLetterQueueStorage(
+        str(tmp_path / "dead_letter_queue.db")
+    )
+    test_app.state.error_analytics = ErrorAnalyticsStorage(
+        str(tmp_path / "error_analytics.db")
     )
     return test_app
 

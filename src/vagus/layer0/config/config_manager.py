@@ -241,6 +241,8 @@ class ConfigManager:
                 "request_signing_ttl_seconds": 300,
                 "request_signing_credentials_path": "~/.vagus/client_credentials.json",
                 "audit_db_path": "audit_trail.db",
+                "dead_letter_queue_db_path": "dead_letter_queue.db",
+                "error_analytics_db_path": "error_analytics.db",
                 "rate_limit": {
                     "anonymous_requests_per_minute": 10,
                     "user_requests_per_minute": 100,
@@ -251,6 +253,16 @@ class ConfigManager:
             "jwt": {
                 "secret_rotation_days": 30,
                 "max_old_secrets": 3
+            },
+            "retry": {
+                "max_attempts": 5,
+                "backoff_factor": 2.0,
+                "retryable_errors": ["timeout", "rate_limit", "network_error"],
+            },
+            "task_timeouts": {
+                "researcher": 300,
+                "coder": 600,
+                "analyst": 180,
             },
             "secrets": {
                 "backend": "local",

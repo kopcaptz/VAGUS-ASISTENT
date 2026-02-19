@@ -3,6 +3,10 @@
 import pytest
 from vagus.layer3.api.models import (
     AgentInfoResponse,
+    CircuitBreakerStatsResponse,
+    DeadLetterQueueEntryResponse,
+    DeadLetterQueueManualFixRequest,
+    DeadLetterQueueRetryRequest,
     ErrorResponse,
     RefreshTokenRequest,
     SystemStatusResponse,
@@ -150,3 +154,43 @@ def test_task_list_item():
 def test_refresh_token_request():
     req = RefreshTokenRequest(refresh_token="tok123")
     assert req.refresh_token == "tok123"
+
+
+def test_dead_letter_queue_models():
+    from datetime import datetime, timezone
+
+    entry = DeadLetterQueueEntryResponse(
+        id=1,
+        task_id="t1",
+        agent_type="coder",
+        error_message="timeout",
+        stack_trace="trace",
+        timestamp=datetime.now(timezone.utc),
+        retry_count=2,
+        status="pending",
+        manual_fix_note=None,
+        task_payload={"prompt": "x"},
+    )
+    assert entry.task_id == "t1"
+
+    manual = DeadLetterQueueManualFixRequest(note="fixed")
+    assert manual.note == "fixed"
+
+    retry = DeadLetterQueueRetryRequest(prompt="retry")
+    assert retry.prompt == "retry"
+
+
+def test_circuit_breaker_stats_response_model():
+    model = CircuitBreakerStatsResponse(
+        provider_id="openai",
+        state="open",
+        failure_count=3,
+        last_failure_time="2026-02-19T00:00:00+00:00",
+        success_rate=62.5,
+        recovery_timeout=60,
+        failure_threshold=3,
+        total_success_count=5,
+        total_failure_count=3,
+    )
+    assert model.provider_id == "openai"
+    assert model.state == "open"

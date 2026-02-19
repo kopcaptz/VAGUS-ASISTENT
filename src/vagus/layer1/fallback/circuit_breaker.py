@@ -4,6 +4,7 @@
 """
 
 import time
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Callable, Any, Dict
 from ...layer0.logging import get_logger
@@ -45,7 +46,10 @@ class CircuitBreaker:
         self._state = CircuitBreakerState.CLOSED
         self._failure_count = 0
         self._success_count = 0
+        self._total_failure_count = 0
+        self._total_success_count = 0
         self._last_failure_time: float = 0
+        self._last_failure_wall_time: float = 0
         self._half_open_attempts = 0
         
         self.logger = get_logger("circuit_breaker")
@@ -135,6 +139,7 @@ class CircuitBreaker:
 
     def _on_success(self) -> None:
         """Обработка успешного вызова."""
+        self._total_success_count += 1
         if self.state == CircuitBreakerState.HALF_OPEN:
             self._success_count += 1
             self.logger.debug(f"HALF_OPEN успех {self._success_count}/{self.half_open_max_requests}")
@@ -155,7 +160,9 @@ class CircuitBreaker:
     def _on_failure(self) -> None:
         """Обработка неудачного вызова."""
         self._failure_count += 1
+        self._total_failure_count += 1
         self._last_failure_time = time.monotonic()
+        self._last_failure_wall_time = time.time()
         
         if self.state == CircuitBreakerState.CLOSED and self._failure_count >= self.failure_threshold:
             self._state = CircuitBreakerState.OPEN
@@ -179,12 +186,24 @@ class CircuitBreaker:
             "state": self.state.value,
             "failure_count": self._failure_count,
             "success_count": self._success_count,
+            "total_failure_count": self._total_failure_count,
+            "total_success_count": self._total_success_count,
             "half_open_attempts": self._half_open_attempts,
             "last_failure_time": self._last_failure_time,
+            "last_failure_iso": (
+                datetime.fromtimestamp(self._last_failure_wall_time, tz=timezone.utc).isoformat()
+                if self._last_failure_wall_time > 0
+                else None
+            ),
             "failure_threshold": self.failure_threshold,
             "recovery_timeout": self.recovery_timeout,
             "half_open_max_requests": self.half_open_max_requests,
-            "time_since_last_failure": time.monotonic() - self._last_failure_time if self._last_failure_time > 0 else 0
+            "time_since_last_failure": time.monotonic() - self._last_failure_time if self._last_failure_time > 0 else 0,
+            "success_rate": (
+                (self._total_success_count / (self._total_success_count + self._total_failure_count)) * 100.0
+                if (self._total_success_count + self._total_failure_count) > 0
+                else 100.0
+            ),
         }
 
     def reset(self) -> None:
@@ -192,8 +211,11 @@ class CircuitBreaker:
         self._state = CircuitBreakerState.CLOSED
         self._failure_count = 0
         self._success_count = 0
+        self._total_failure_count = 0
+        self._total_success_count = 0
         self._half_open_attempts = 0
         self._last_failure_time = 0
+        self._last_failure_wall_time = 0
         self.logger.info("Circuit Breaker сброшен")
 
     def __str__(self) -> str:

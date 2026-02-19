@@ -52,3 +52,7 @@ class BaseAgent(ABC):
         Переопределить в подклассах.
         """
         return False
+
+    def is_available(self) -> bool:
+        """Health-check hook for orchestrator graceful degradation."""
+        return True

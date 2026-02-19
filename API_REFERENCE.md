@@ -169,3 +169,73 @@ security:
 ```
 
 - Если Redis недоступен или не настроен, используется in-memory sliding window backend.
+
+## Error Handling & Resilience (Stage 4)
+
+### Dead Letter Queue
+
+#### `GET /api/v1/admin/dead-letter-queue`
+
+- Access: `admin only`
+- Query params:
+  - `limit` (1..1000, default 100)
+  - `status` (optional)
+  - `agent_type` (optional)
+
+Response item fields:
+- `task_id`
+- `agent_type`
+- `error_message`
+- `stack_trace`
+- `timestamp`
+- `retry_count`
+
+#### `POST /api/v1/admin/dead-letter-queue/{task_id}/retry`
+
+- Access: `admin only`
+- Body (optional):
+
+```json
+{
+  "prompt": "optional override",
+  "task_type": "optional override",
+  "metadata": {"retry_reason": "manual"}
+}
+```
+
+#### `POST /api/v1/admin/dead-letter-queue/{task_id}/manual-fix`
+
+- Access: `admin only`
+- Body:
+
+```json
+{"note": "Fixed manually by admin"}
+```
+
+### Circuit Breakers dashboard API
+
+#### `GET /api/v1/admin/circuit-breakers`
+
+- Access: `admin only`
+- Returns:
+  - `breakers`: list with `provider_id`, `state`, `failure_count`, `last_failure_time`, `success_rate`, ...
+  - `history`: state history snapshots for dashboard plotting
+
+#### `POST /api/v1/admin/circuit-breakers/{provider_id}/reset`
+
+- Access: `admin only`
+- Manual reset for selected provider circuit breaker.
+
+### Error analytics API
+
+#### `GET /api/v1/admin/error-analytics`
+
+- Access: `admin only`
+- Query params:
+  - `window_minutes` (1..1440, default 60)
+  - `top_sources_limit` (1..100, default 10)
+- Returns:
+  - `error_rate_by_type` (transient/permanent/infrastructure)
+  - `top_error_sources`
+  - `correlation`
+  - `recent_events`

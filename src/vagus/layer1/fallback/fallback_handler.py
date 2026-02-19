@@ -5,6 +5,7 @@
 from typing import List, Callable, Awaitable, Any, Dict, Optional
 from .circuit_breaker import CircuitBreaker, CircuitBreakerOpenError
 from .retry_manager import RetryManager
+from .retry_handler import RetryConfig, RetryHandler
 from ...layer0.logging import get_logger
 
 
@@ -20,6 +21,8 @@ class FallbackHandler:
         recovery_timeout: int = 60,
         max_retries: int = 3,
         base_delay: float = 1.0,
+        retry_config: Optional[Dict[str, Any]] = None,
+        retry_handler: Optional[RetryHandler] = None,
     ):
         """
         Инициализация FallbackHandler.
@@ -37,10 +40,18 @@ class FallbackHandler:
             max_retries=max_retries,
             base_delay=base_delay,
         )
+        resolved_retry_config = RetryConfig.from_dict(retry_config)
+        # Keep old "max_retries" behavior compatible if explicit config is not passed.
+        if retry_config is None:
+            resolved_retry_config.max_attempts = max(1, int(max_retries))
+        self.retry_handler = retry_handler or RetryHandler(
+            config=resolved_retry_config,
+            base_delay_seconds=base_delay,
+        )
         self.logger = get_logger("fallback.handler")
         self.logger.info(
             f"FallbackHandler инициализирован (threshold={failure_threshold}, "
-            f"retries={max_retries})"
+            f"retries={self.retry_handler.config.max_attempts})"
         )
 
     def _get_circuit_breaker(self, provider_id: str) -> CircuitBreaker:
@@ -96,7 +107,7 @@ class FallbackHandler:
                 return _do_request
 
             try:
-                result = await self.retry_manager.execute_with_retry(
+                result = await self.retry_handler.execute(
                     _make_request(provider_id)
                 )
                 return (result, provider_id)

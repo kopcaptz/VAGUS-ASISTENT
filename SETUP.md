@@ -148,6 +148,8 @@ security:
   request_signing_ttl_seconds: 300
   request_signing_credentials_path: "~/.vagus/client_credentials.json"
   audit_db_path: "audit_trail.db"
+  dead_letter_queue_db_path: "dead_letter_queue.db"
+  error_analytics_db_path: "error_analytics.db"
   rate_limit:
     anonymous_requests_per_minute: 10
     user_requests_per_minute: 100
@@ -168,6 +170,20 @@ layer1:
     enable_cache: true
     enable_budgeting: true
     default_strategy: hybrid
+  retry:
+    max_attempts: 5
+    backoff_factor: 2.0
+    retryable_errors: ["timeout", "rate_limit", "network_error"]
+
+retry:
+  max_attempts: 5
+  backoff_factor: 2.0
+  retryable_errors: ["timeout", "rate_limit", "network_error"]
+
+task_timeouts:
+  researcher: 300
+  coder: 600
+  analyst: 180
 ```
 
 ### WebSocket limits и close codes
@@ -248,6 +264,39 @@ monitoring:
 
 - Шаблон конфигурации: `configs/alerting.yaml.example`
 - Каналы: Telegram, SMTP email, Webhook
+
+## 12. Error Handling & Resilience
+
+### Dead Letter Queue (DLQ)
+
+- SQLite table: `dead_letter_queue`
+- Admin endpoints:
+  - `GET /api/v1/admin/dead-letter-queue`
+  - `POST /api/v1/admin/dead-letter-queue/{task_id}/retry`
+  - `POST /api/v1/admin/dead-letter-queue/{task_id}/manual-fix`
+
+### Retry configuration
+
+```yaml
+retry:
+  max_attempts: 5
+  backoff_factor: 2.0
+  retryable_errors: ["timeout", "rate_limit", "network_error"]
+```
+
+- Backoff sequence по умолчанию: `1s, 2s, 4s, 8s, 16s`
+- Retry выполняется только для transient ошибок
+
+### Task timeout per agent
+
+```yaml
+task_timeouts:
+  researcher: 300
+  coder: 600
+  analyst: 180
+```
+
+- При превышении таймаута задача автоматически отменяется и попадает в DLQ.
 
 ### Grafana + Prometheus stack
 
