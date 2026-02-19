@@ -17,6 +17,26 @@ from .request_handler import RequestHandler
 from .response_builder import ResponseBuilder
 from ...layer0.logging import get_logger
 
+try:
+    from ...layer3.api.metrics import (
+        record_cache_hit,
+        record_cache_miss,
+        record_llm_request,
+        update_circuit_breaker_state_from_router,
+    )
+except Exception:  # pragma: no cover - defensive fallback for import-time issues
+    def record_cache_hit() -> None:
+        return None
+
+    def record_cache_miss() -> None:
+        return None
+
+    def record_llm_request(provider: str, model: str, status: str) -> None:
+        return None
+
+    def update_circuit_breaker_state_from_router(llm_router: object) -> None:
+        return None
+
 
 class LLMRouter:
     """Центральная точка входа для запросов к LLM."""
@@ -118,6 +138,7 @@ class LLMRouter:
         if self.enable_cache:
             cached = await self.cache.get(prompt, **cache_key_kw)
             if cached is not None:
+                record_cache_hit()
                 self.logger.debug("Cache HIT")
                 if stream and isinstance(cached, str):
                     yield self.response_builder.build_chunk(cached, done=True)
@@ -126,6 +147,7 @@ class LLMRouter:
                 else:
                     yield self.response_builder.build_chunk(str(cached), done=True)
                 return
+            record_cache_miss()
 
         if self.enable_budgeting:
             await self.budgeting.check_budget(estimated_cost=0.01)
@@ -191,6 +213,8 @@ class LLMRouter:
             result, used_provider = exec_result
         except Exception as e:
             self.logger.error(f"Request failed: {e}")
+            record_llm_request(chain_ids[0], model or "unknown", "error")
+            update_circuit_breaker_state_from_router(self)
             if self.enable_monitoring:
                 self.monitoring.record_complete_request(
                     trace_id=trace_id, provider=chain_ids[0], model=model or "unknown",
@@ -215,6 +239,8 @@ class LLMRouter:
                 trace_id=trace_id, provider=used_provider or "unknown", model=model or "unknown",
                 success=True, e2e_ms=latency, cost_usd=cost,
             )
+        record_llm_request(used_provider or "unknown", model or "unknown", "success")
+        update_circuit_breaker_state_from_router(self)
         if self.enable_cache and content_str:
             await self.cache.set(prompt, content_str, **cache_key_kw)
         self._stats["requests"] = self._stats.get("requests", 0) + 1

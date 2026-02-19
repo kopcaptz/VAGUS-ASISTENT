@@ -46,6 +46,8 @@ class RequestSigningMiddleware(BaseHTTPMiddleware):
             exempt_paths
             or {
                 "/health",
+                "/health/detailed",
+                "/metrics",
                 "/docs",
                 "/redoc",
                 "/openapi.json",

@@ -1,5 +1,52 @@
 # API Reference (Layer 3 / WebSocket)
 
+## Monitoring endpoints
+
+### `GET /metrics`
+
+Prometheus metrics endpoint (text format):
+
+- `http_requests_total{method,endpoint,status}`
+- `http_request_duration_seconds` (histogram)
+- `websocket_connections_active`
+- `task_execution_total{agent_type,status}`
+- `llm_requests_total{provider,model,status}`
+- `cache_hits_total`, `cache_misses_total`
+- `circuit_breaker_state` (`0=closed`, `1=open`, `2=half-open`)
+
+### `GET /health`
+
+Базовый health endpoint:
+
+```json
+{"status":"ok"}
+```
+
+### `GET /health/detailed`
+
+Детальный health report:
+
+```json
+{
+  "status": "ok|degraded|failed",
+  "timestamp": "2026-02-19T00:00:00+00:00",
+  "thresholds": {
+    "disk_free_percent_min": 10.0,
+    "memory_usage_percent_max": 90.0,
+    "check_timeout_seconds": 2.0,
+    "disk_path": "."
+  },
+  "checks": {
+    "database": {"status": "ok"},
+    "redis": {"status": "ok|failed|skipped"},
+    "llm_providers": {"status": "ok|degraded|failed"},
+    "secrets_manager": {"status": "ok|failed"},
+    "disk_space": {"status": "ok|failed"},
+    "memory_usage": {"status": "ok|failed|degraded"}
+  }
+}
+```
+
 ## WebSocket stream
 
 - Endpoint: `WS /api/v1/tasks/ws/{task_id}?token=<access_token>`

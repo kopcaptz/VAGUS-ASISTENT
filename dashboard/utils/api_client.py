@@ -22,6 +22,12 @@ class VagusAPIClient:
         self._token = token
 
     @property
+    def root_url(self) -> str:
+        if self.base_url.endswith("/api/v1"):
+            return self.base_url[: -len("/api/v1")]
+        return self.base_url
+
+    @property
     def _headers(self) -> Dict[str, str]:
         if self._token:
             return {"Authorization": f"Bearer {self._token}"}
@@ -101,6 +107,30 @@ class VagusAPIClient:
         with httpx.Client(timeout=10) as client:
             resp = client.get(
                 f"{self.base_url}/status",
+                headers=self._headers,
+            )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_prometheus_metrics(self) -> str:
+        """Текст метрик Prometheus."""
+        if not HTTPX_AVAILABLE:
+            return ""
+        with httpx.Client(timeout=10) as client:
+            resp = client.get(
+                f"{self.root_url}/metrics",
+                headers=self._headers,
+            )
+        resp.raise_for_status()
+        return resp.text
+
+    def get_detailed_health(self) -> Dict[str, Any]:
+        """Детальный health check."""
+        if not HTTPX_AVAILABLE:
+            return {}
+        with httpx.Client(timeout=10) as client:
+            resp = client.get(
+                f"{self.root_url}/health/detailed",
                 headers=self._headers,
             )
         resp.raise_for_status()

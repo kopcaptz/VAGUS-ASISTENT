@@ -73,3 +73,11 @@ layer1:
   monitoring:
     db_path: metrics.db
     retention_days: 30
+
+monitoring:
+  health:
+    thresholds:
+      disk_free_percent_min: 10.0
+      memory_usage_percent_max: 90.0
+      check_timeout_seconds: 2.0
+      disk_path: "."

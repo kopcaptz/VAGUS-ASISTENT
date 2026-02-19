@@ -7,6 +7,8 @@ try:
 except ImportError:
     typer = None  # type: ignore[assignment]
 
+from vagus.logging import generate_trace_id, logging_context
+
 from .utils.config import save_config
 from .utils.output import print_success
 
@@ -39,8 +41,9 @@ def create_app():
         api_key: str = typer.Option(..., prompt=True, hide_input=True, help="API-ключ"),
     ):
         """Аутентификация и сохранение учётных данных."""
-        save_config({"api_url": api_url, "api_key": api_key})
-        print_success("Учётные данные сохранены.")
+        with logging_context(trace_id=generate_trace_id(), component="cli"):
+            save_config({"api_url": api_url, "api_key": api_key})
+            print_success("Учётные данные сохранены.")
 
     return app
 

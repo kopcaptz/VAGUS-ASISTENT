@@ -6,6 +6,7 @@ import json
 import time
 from typing import Any, Dict, List, Optional
 
+from vagus.logging import generate_request_id, generate_trace_id, get_trace_id
 from vagus.layer3.security.request_signing import (
     HEADER_CLIENT_ID,
     HEADER_SIGNATURE,
@@ -31,6 +32,7 @@ class CLIApiClient:
         cfg = load_config()
         self.api_url = (api_url or cfg.get("api_url", "http://localhost:8000")).rstrip("/")
         self.api_key = api_key or cfg.get("api_key", "")
+        self.trace_id = get_trace_id() or generate_trace_id()
         self.enable_request_signing = bool(cfg.get("enable_request_signing", True))
         self._client_credentials: Optional[dict[str, str]] = None
         if self.enable_request_signing:
@@ -53,6 +55,8 @@ class CLIApiClient:
         cli_arguments: Optional[dict[str, Any]],
     ) -> Dict[str, str]:
         headers = dict(self._headers)
+        headers["X-Trace-Id"] = self.trace_id
+        headers["X-Request-Id"] = generate_request_id()
         headers["X-Vagus-CLI-Command"] = cli_command
         if cli_arguments:
             headers["X-Vagus-CLI-Arguments"] = json.dumps(cli_arguments, ensure_ascii=False)

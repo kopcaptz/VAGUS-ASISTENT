@@ -202,3 +202,60 @@ layer1:
 | `VAGUS_SECRET_KEY` | Секрет для JWT | `vagus-dev-secret-...` |
 | `TELEGRAM_BOT_TOKEN` | Токен Telegram бота | — |
 | `VAGUS_API_URL` | URL REST API | `http://localhost:8000` |
+
+## 11. Monitoring & Observability
+
+### Prometheus endpoint
+
+- Метрики доступны на `GET /metrics`
+- Формат: Prometheus exposition format
+
+Проверка:
+
+```bash
+curl http://localhost:8000/metrics
+```
+
+### Detailed health endpoint
+
+- Детальный health check: `GET /health/detailed`
+- Включает проверки:
+  - SQLite
+  - Redis (если настроен)
+  - LLM providers
+  - Secrets manager
+  - Disk / Memory thresholds
+
+Проверка:
+
+```bash
+curl http://localhost:8000/health/detailed
+```
+
+### Threshold configuration
+
+```yaml
+monitoring:
+  health:
+    thresholds:
+      disk_free_percent_min: 10.0
+      memory_usage_percent_max: 90.0
+      check_timeout_seconds: 2.0
+      disk_path: "."
+```
+
+### Alerting configuration
+
+- Шаблон конфигурации: `configs/alerting.yaml.example`
+- Каналы: Telegram, SMTP email, Webhook
+
+### Grafana + Prometheus stack
+
+```bash
+cd monitoring
+docker compose up -d
+```
+
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3000 (admin/admin)
+- Дашборды автоматически подхватываются из `monitoring/grafana/`

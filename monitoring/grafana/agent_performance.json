@@ -1,0 +1,113 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "targets": [
+        {
+          "expr": "sum(rate(task_execution_total{agent_type=~\"$agent_type\"}[5m])) by (agent_type, status)",
+          "legendFormat": "{{agent_type}} {{status}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Task Execution Rate by Agent Type/Status",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "(sum(rate(task_execution_total{status=\"success\",agent_type=~\"$agent_type\"}[5m])) by (agent_type) / clamp_min(sum(rate(task_execution_total{agent_type=~\"$agent_type\"}[5m])) by (agent_type), 1e-9)) * 100",
+          "legendFormat": "{{agent_type}} success ratio",
+          "refId": "A"
+        }
+      ],
+      "title": "Agent Success Ratio",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum(increase(task_execution_total{agent_type=~\"$agent_type\"}[24h])) by (agent_type)",
+          "legendFormat": "{{agent_type}}",
+          "refId": "A"
+        }
+      ],
+      "title": "24h Task Volume by Agent Type",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": [
+    "vagus",
+    "agents"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": ".*"
+        },
+        "datasource": "Prometheus",
+        "definition": "label_values(task_execution_total, agent_type)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Agent type",
+        "multi": true,
+        "name": "agent_type",
+        "options": [],
+        "query": "label_values(task_execution_total, agent_type)",
+        "refresh": 1,
+        "skipUrlSync": false,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timezone": "",
+  "title": "Agent Performance",
+  "version": 1
+}

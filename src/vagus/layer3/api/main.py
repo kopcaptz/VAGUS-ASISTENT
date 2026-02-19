@@ -13,15 +13,18 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from vagus.layer0.logging import get_logger
+from vagus.logging import StructuredLoggingMiddleware, configure_structured_logging
 
 from .audit.audit_trail import AuditTrail
 from .auth import configure_jwt_secret_rotation
+from .health import health_router, load_health_thresholds
 from .middleware import (
     AuditTrailMiddleware,
     IPWhitelistMiddleware,
     RateLimitMiddleware,
     RequestSigningMiddleware,
 )
+from .metrics import HTTPMetricsMiddleware, metrics_router
 from .routers import admin_router, agents_router, auth_router, status_router, tasks_router
 from .websocket_security import WebSocketAuditStorage, WebSocketRuntimeSettings
 
@@ -122,6 +125,11 @@ def _load_security_settings(config_data: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(rate_cfg, dict):
         rate_cfg = {}
 
+    anonymous_rpm = _safe_int(rate_cfg.get("anonymous_requests_per_minute"), 10)
+    user_rpm = _safe_int(rate_cfg.get("user_requests_per_minute"), 100)
+    admin_rpm = _safe_int(rate_cfg.get("admin_requests_per_minute"), 1000)
+    redis_url = rate_cfg.get("redis_url")
+
     return {
         "admin_ip_whitelist": _safe_string_list(security_cfg.get("admin_ip_whitelist")),
         "enable_request_signing": _safe_bool(security_cfg.get("enable_request_signing"), False),
@@ -129,12 +137,16 @@ def _load_security_settings(config_data: dict[str, Any]) -> dict[str, Any]:
             security_cfg.get("request_signing_ttl_seconds"), 300
         ),
         "request_signing_credentials_path": security_cfg.get("request_signing_credentials_path"),
-        "anonymous_requests_per_minute": _safe_int(
-            rate_cfg.get("anonymous_requests_per_minute"), 10
-        ),
-        "user_requests_per_minute": _safe_int(rate_cfg.get("user_requests_per_minute"), 100),
-        "admin_requests_per_minute": _safe_int(rate_cfg.get("admin_requests_per_minute"), 1000),
-        "rate_limit_redis_url": rate_cfg.get("redis_url"),
+        "anonymous_requests_per_minute": anonymous_rpm,
+        "user_requests_per_minute": user_rpm,
+        "admin_requests_per_minute": admin_rpm,
+        "rate_limit_redis_url": redis_url,
+        "rate_limit": {
+            "anonymous_requests_per_minute": anonymous_rpm,
+            "user_requests_per_minute": user_rpm,
+            "admin_requests_per_minute": admin_rpm,
+            "redis_url": redis_url,
+        },
         "audit_db_path": security_cfg.get("audit_db_path", "audit_trail.db"),
     }
 
@@ -146,6 +158,20 @@ def _load_jwt_settings(config_data: dict[str, Any]) -> dict[str, int]:
     return {
         "secret_rotation_days": _safe_int(jwt_cfg.get("secret_rotation_days"), 30),
         "max_old_secrets": _safe_int(jwt_cfg.get("max_old_secrets"), 3),
+    }
+
+
+def _load_secrets_settings(config_data: dict[str, Any]) -> dict[str, Any]:
+    secrets_cfg = config_data.get("secrets", {}) if isinstance(config_data, dict) else {}
+    if not isinstance(secrets_cfg, dict):
+        secrets_cfg = {}
+    backend = secrets_cfg.get("backend", "local")
+    if not isinstance(backend, str):
+        backend = "local"
+    return {
+        "backend": backend.strip().lower() or "local",
+        "vault_addr": secrets_cfg.get("vault_addr"),
+        "vault_token": secrets_cfg.get("vault_token"),
     }
 
 
@@ -184,10 +210,14 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     """Фабрика приложения FastAPI."""
+    configure_structured_logging(force=True)
+
     runtime_config, runtime_config_path = _load_runtime_yaml_config()
     websocket_settings = _load_websocket_settings(runtime_config)
     security_settings = _load_security_settings(runtime_config)
     jwt_settings = _load_jwt_settings(runtime_config)
+    secrets_settings = _load_secrets_settings(runtime_config)
+    health_thresholds = load_health_thresholds(runtime_config)
     configure_jwt_secret_rotation(
         secret_rotation_days=jwt_settings["secret_rotation_days"],
         max_old_secrets=jwt_settings["max_old_secrets"],
@@ -234,16 +264,23 @@ def create_app() -> FastAPI:
         admin_path_prefix="/api/v1/admin/",
     )
     app.add_middleware(AuditTrailMiddleware)
+    app.add_middleware(HTTPMetricsMiddleware)
+    app.add_middleware(StructuredLoggingMiddleware, component="api")
 
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(tasks_router, prefix="/api/v1")
     app.include_router(agents_router, prefix="/api/v1")
     app.include_router(status_router, prefix="/api/v1")
     app.include_router(admin_router, prefix="/api/v1")
+    app.include_router(metrics_router)
+    app.include_router(health_router)
 
     app.state.websocket_settings = websocket_settings
     app.state.security_settings = security_settings
     app.state.jwt_settings = jwt_settings
+    app.state.secrets_settings = secrets_settings
+    app.state.health_thresholds = health_thresholds
+    app.state.runtime_config = runtime_config
 
     @app.get("/health")
     async def health():
