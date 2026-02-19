@@ -21,6 +21,7 @@ async def lifespan(app: FastAPI):
     app.state.llm_router = LLMRouter()
     await app.state.llm_router.initialize()
     app.state.orchestrator = create_orchestrator_with_researcher(app.state.llm_router)
+    app.state.task_store = {}
 
     yield
 
@@ -47,5 +48,6 @@ app.add_middleware(
 # Подключение роутеров
 app.include_router(auth.router, prefix="/api/v1", tags=["auth"])
 app.include_router(tasks.router, prefix="/api/v1", tags=["tasks"])
+app.include_router(tasks.router, prefix="/ws", tags=["tasks"])  # WebSocket: /ws/tasks/{task_id}
 app.include_router(agents.router, prefix="/api/v1", tags=["agents"])
 app.include_router(status.router, prefix="/api/v1", tags=["status"])
