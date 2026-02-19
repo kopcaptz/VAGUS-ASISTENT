@@ -9,6 +9,9 @@ uvicorn>=0.22
 typer>=0.9
 rich>=13.0
 httpx>=0.24
+
+# Layer 3 - Telegram
+aiogram>=3.0
 python-jose[cryptography]>=3.3
 passlib[bcrypt]>=1.7
 python-dotenv>=1.0
