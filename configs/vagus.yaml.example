@@ -1,0 +1,47 @@
+# Vagus Asistent - пример конфигурации
+# Скопируйте в vagus.yaml и настройте
+
+version: 1
+name: Vagus Asistent
+global:
+  default_model: gpt-4o-mini
+  log_level: INFO
+  workspace_path: ./workspace
+  max_concurrent_requests: 10
+  api_timeout: 30
+
+providers:
+  openai:
+    endpoint: https://api.openai.com/v1
+    rate_limit: 60
+    timeout: 30
+    enabled: true
+    models: [gpt-4o, gpt-4o-mini]
+  anthropic:
+    endpoint: https://api.anthropic.com
+    rate_limit: 60
+    timeout: 30
+    enabled: true
+    models: [claude-3-5-sonnet, claude-3-haiku]
+  deepseek:
+    endpoint: https://api.deepseek.com/v1
+    rate_limit: 60
+    timeout: 30
+    enabled: true
+    models: [deepseek-chat]
+
+layer1:
+  router:
+    enable_cache: true
+    enable_budgeting: true
+    enable_monitoring: true
+    default_strategy: hybrid
+  cache:
+    ttl_seconds: 3600
+    max_size_mb: 100
+  budgeting:
+    daily_limit_usd: 10.0
+    monthly_limit_usd: 200.0
+  monitoring:
+    db_path: metrics.db
+    retention_days: 30

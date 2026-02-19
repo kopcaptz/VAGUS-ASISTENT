@@ -1,0 +1,15 @@
+# Vagus Asistent - Layer 1
+pydantic>=2.0
+python-dotenv>=1.0
+pyyaml>=6.0
+
+# LLM провайдеры (опционально, для работы с API)
+# pip install openai anthropic  # для OpenAI, Anthropic, DeepSeek, OpenRouter
+# pip install google-generativeai  # для Google Gemini
+
+# Hot-reload конфигурации (опционально)
+# pip install watchdog
+
+# Тестирование
+pytest>=7.0
+pytest-asyncio>=0.21
