@@ -44,6 +44,18 @@ def build_router_kwargs(config: Any) -> Dict[str, Any]:
     mon_cfg = layer1.get("monitoring", {})
     fallback_cfg = layer1.get("fallback", {})
     cb_cfg = fallback_cfg.get("circuit_breaker", {})
+    retry_cfg = layer1.get("retry", {})
+    if not isinstance(retry_cfg, dict):
+        retry_cfg = {}
+    # Allow top-level retry section too for runtime YAML compatibility.
+    top_level_retry = {}
+    if hasattr(config, "model_dump"):
+        data = config.model_dump()
+        top_level_retry = data.get("retry", {}) if isinstance(data, dict) else {}
+    elif isinstance(config, dict):
+        top_level_retry = config.get("retry", {})
+    if isinstance(top_level_retry, dict) and top_level_retry:
+        retry_cfg = {**retry_cfg, **top_level_retry}
 
     return {
         "enable_cache": router_cfg.get("enable_cache", True),
@@ -59,4 +71,10 @@ def build_router_kwargs(config: Any) -> Dict[str, Any]:
         "fallback_max_retries": fallback_cfg.get("max_retries", 3),
         "fallback_base_delay": fallback_cfg.get("base_delay_seconds", 1.0),
         "fallback_chain": fallback_cfg.get("providers"),
+        "retry_max_attempts": retry_cfg.get("max_attempts", 5),
+        "retry_backoff_factor": retry_cfg.get("backoff_factor", 2.0),
+        "retry_retryable_errors": retry_cfg.get(
+            "retryable_errors",
+            ["timeout", "rate_limit", "network_error"],
+        ),
     }

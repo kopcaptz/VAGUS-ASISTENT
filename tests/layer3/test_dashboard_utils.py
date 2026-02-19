@@ -1,7 +1,15 @@
 """Тесты утилит Dashboard."""
 
 import pytest
-from dashboard.utils.charts import extract_metrics, format_cost, format_uptime
+from dashboard.utils.charts import (
+    append_circuit_breaker_history,
+    circuit_breaker_state_to_numeric,
+    extract_error_rates,
+    extract_metrics,
+    flatten_circuit_breaker_history,
+    format_cost,
+    format_uptime,
+)
 
 
 def test_format_uptime_seconds():
@@ -48,3 +56,40 @@ def test_extract_metrics_empty():
     m = extract_metrics({})
     assert m["agents"] == 0
     assert m["requests"] == 0
+
+
+def test_circuit_breaker_state_to_numeric():
+    assert circuit_breaker_state_to_numeric("closed") == 0
+    assert circuit_breaker_state_to_numeric("open") == 1
+    assert circuit_breaker_state_to_numeric("half-open") == 2
+
+
+def test_append_and_flatten_circuit_breaker_history():
+    history = []
+    history = append_circuit_breaker_history(
+        history,
+        {"timestamp": 100.0, "states": {"openai": "closed"}},
+        now_ts=100.0,
+    )
+    history = append_circuit_breaker_history(
+        history,
+        {"timestamp": 101.0, "states": {"openai": "open", "anthropic": "half-open"}},
+        now_ts=101.0,
+    )
+    rows = flatten_circuit_breaker_history(history)
+    assert len(rows) == 3
+    assert any(row["provider_id"] == "openai" and row["state_numeric"] == 1 for row in rows)
+    assert any(row["provider_id"] == "anthropic" and row["state_numeric"] == 2 for row in rows)
+
+
+def test_extract_error_rates():
+    rates = extract_error_rates(
+        {
+            "error_rate_by_type": {
+                "rates_percent": {"transient": 25.0, "permanent": 50.0, "infrastructure": 25.0}
+            }
+        }
+    )
+    assert rates["transient"] == 25.0
+    assert rates["permanent"] == 50.0
+    assert rates["infrastructure"] == 25.0

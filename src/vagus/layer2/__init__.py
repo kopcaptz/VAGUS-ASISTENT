@@ -2,19 +2,25 @@
 Слой 2: Агентная система — Orchestrator-Worker.
 """
 
-from typing import Any
+from typing import Any, Optional
 
 from .communication import CommunicationLayer
 from .agents.base_agent import BaseAgent
 from .agents.analyst import AnalystAgent
 from .agents.coder import CoderAgent
 from .agents.researcher import ResearcherAgent
+from .dead_letter_queue import DeadLetterQueueStorage
 from .memory import EpisodicMemory, SemanticMemory
 from .orchestrator import TaskOrchestrator
 from .skills import SkillSystem
 
 
-def create_orchestrator_with_researcher(llm_router: Any) -> TaskOrchestrator:
+def create_orchestrator_with_researcher(
+    llm_router: Any,
+    *,
+    dead_letter_queue: Optional[DeadLetterQueueStorage] = None,
+    task_timeouts: Optional[dict[str, float]] = None,
+) -> TaskOrchestrator:
     """
     Создаёт TaskOrchestrator с зарегистрированным ResearcherAgent.
     Удобная точка входа для E2E и первого сценария.
@@ -22,12 +28,23 @@ def create_orchestrator_with_researcher(llm_router: Any) -> TaskOrchestrator:
     communication = CommunicationLayer()
     skill_system = SkillSystem()
     researcher = ResearcherAgent(llm_router=llm_router, skill_system=skill_system)
-    orchestrator = TaskOrchestrator(communication=communication)
+    orchestrator = TaskOrchestrator(
+        communication=communication,
+        dead_letter_queue=dead_letter_queue,
+        task_timeouts=task_timeouts,
+        skill_system=skill_system,
+    )
     orchestrator.register_agent(researcher)
     return orchestrator
 
 
-def create_orchestrator_full(llm_router: Any) -> TaskOrchestrator:
+def create_orchestrator_full(
+    llm_router: Any,
+    *,
+    dead_letter_queue: Optional[DeadLetterQueueStorage] = None,
+    task_timeouts: Optional[dict[str, float]] = None,
+    error_analytics: Optional[Any] = None,
+) -> TaskOrchestrator:
     """
     Создаёт TaskOrchestrator со всеми агентами (Researcher, Coder, Analyst),
     EpisodicMemory и SemanticMemory для векторного поиска похожих задач.
@@ -40,6 +57,10 @@ def create_orchestrator_full(llm_router: Any) -> TaskOrchestrator:
         communication=communication,
         memory=memory,
         semantic_memory=semantic_memory,
+        dead_letter_queue=dead_letter_queue,
+        task_timeouts=task_timeouts,
+        skill_system=skill_system,
+        error_analytics=error_analytics,
     )
     orchestrator.register_agent(ResearcherAgent(llm_router=llm_router, skill_system=skill_system))
     orchestrator.register_agent(CoderAgent(llm_router=llm_router, skill_system=skill_system))
@@ -52,6 +73,7 @@ __all__ = [
     "CommunicationLayer",
     "BaseAgent",
     "CoderAgent",
+    "DeadLetterQueueStorage",
     "EpisodicMemory",
     "ResearcherAgent",
     "SemanticMemory",

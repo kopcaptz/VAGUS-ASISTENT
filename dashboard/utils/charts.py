@@ -162,3 +162,63 @@ def append_history_snapshot(
     cutoff = now_value - (window_hours * 3600)
     merged = [*history, snapshot]
     return [item for item in merged if float(item.get("timestamp", 0.0)) >= cutoff]
+
+
+def circuit_breaker_state_to_numeric(state: str) -> int:
+    normalized = (state or "").strip().lower()
+    if normalized == "open":
+        return 1
+    if normalized in {"half-open", "half_open"}:
+        return 2
+    return 0
+
+
+def append_circuit_breaker_history(
+    history: List[Dict[str, Any]],
+    snapshot: Dict[str, Any],
+    *,
+    window_hours: int = 24,
+    now_ts: float | None = None,
+) -> List[Dict[str, Any]]:
+    now_value = float(now_ts if now_ts is not None else time.time())
+    ts_value = snapshot.get("timestamp", now_value)
+    try:
+        snapshot_ts = float(ts_value)
+    except (TypeError, ValueError):
+        snapshot_ts = now_value
+
+    prepared = dict(snapshot)
+    prepared["timestamp"] = snapshot_ts
+    cutoff = now_value - (window_hours * 3600)
+    merged = [*history, prepared]
+    return [item for item in merged if float(item.get("timestamp", 0.0)) >= cutoff]
+
+
+def flatten_circuit_breaker_history(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for item in history:
+        timestamp = float(item.get("timestamp", 0.0))
+        states = item.get("states", {})
+        if not isinstance(states, dict):
+            continue
+        for provider_id, state in states.items():
+            rows.append(
+                {
+                    "timestamp": timestamp,
+                    "provider_id": str(provider_id),
+                    "state_numeric": circuit_breaker_state_to_numeric(str(state)),
+                }
+            )
+    return rows
+
+
+def extract_error_rates(analytics_snapshot: Dict[str, Any]) -> Dict[str, float]:
+    by_type = analytics_snapshot.get("error_rate_by_type", {})
+    rates = by_type.get("rates_percent", {}) if isinstance(by_type, dict) else {}
+    if not isinstance(rates, dict):
+        return {"transient": 0.0, "permanent": 0.0, "infrastructure": 0.0}
+    return {
+        "transient": float(rates.get("transient", 0.0) or 0.0),
+        "permanent": float(rates.get("permanent", 0.0) or 0.0),
+        "infrastructure": float(rates.get("infrastructure", 0.0) or 0.0),
+    }

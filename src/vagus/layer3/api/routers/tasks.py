@@ -79,6 +79,20 @@ def _get_audit_trail(app) -> Optional[AuditTrail]:
     return None
 
 
+def _get_error_analytics(app):
+    if app is None:
+        return None
+    state = getattr(app, "state", None)
+    if state is None:
+        return None
+    storage = getattr(state, "error_analytics", None)
+    if storage is None:
+        return None
+    if not hasattr(storage, "record_error"):
+        return None
+    return storage
+
+
 def _log_audit(
     audit_storage: WebSocketAuditStorage,
     *,
@@ -401,6 +415,7 @@ async def _receive_loop(
 
 @router.post("", response_model=TaskCreateResponse, status_code=201)
 async def create_task(
+    http_request: Request,
     request: TaskCreateRequest,
     orchestrator=Depends(get_orchestrator),
     current_user: dict = Depends(get_current_user),
@@ -422,7 +437,7 @@ async def create_task(
         "updated_at": now,
     }
 
-    asyncio.create_task(_run_task(task_id, request, orchestrator))
+    asyncio.create_task(_run_task(task_id, request, orchestrator, app=http_request.app))
 
     return TaskCreateResponse(
         task_id=task_id,
@@ -433,7 +448,7 @@ async def create_task(
     )
 
 
-async def _run_task(task_id: str, request: TaskCreateRequest, orchestrator):
+async def _run_task(task_id: str, request: TaskCreateRequest, orchestrator, app=None):
     """Фоновое выполнение задачи."""
     task_store[task_id]["status"] = TaskStatus.IN_PROGRESS
     task_store[task_id]["updated_at"] = datetime.now(timezone.utc)
@@ -444,17 +459,52 @@ async def _run_task(task_id: str, request: TaskCreateRequest, orchestrator):
             prompt=request.prompt,
             task_type=request.task_type,
         )
-        task_store[task_id]["status"] = TaskStatus.COMPLETED
         task_store[task_id]["result"] = result
+        has_error = False
         if isinstance(result, dict):
             metadata = result.get("metadata", {})
             if isinstance(metadata, dict) and metadata.get("agent"):
                 agent_type = str(metadata.get("agent"))
-        record_task_execution(agent_type, "success")
+            has_error = bool(result.get("error")) or result.get("success") is False
+
+        if has_error:
+            task_store[task_id]["status"] = TaskStatus.FAILED
+            error_message = (
+                str(result.get("error"))
+                if isinstance(result, dict) and result.get("error")
+                else "Task returned an error result"
+            )
+            task_store[task_id]["error"] = error_message
+            record_task_execution(agent_type, "failed")
+            analytics = _get_error_analytics(app)
+            if analytics is not None:
+                try:
+                    analytics.record_error(
+                        source="layer3.api.tasks",
+                        message=error_message,
+                        error_type="task_execution_error",
+                        metadata={"task_id": task_id, "task_type": request.task_type},
+                    )
+                except Exception:
+                    pass
+        else:
+            task_store[task_id]["status"] = TaskStatus.COMPLETED
+            record_task_execution(agent_type, "success")
     except Exception as e:
         task_store[task_id]["status"] = TaskStatus.FAILED
         task_store[task_id]["error"] = str(e)
         record_task_execution(agent_type, "failed")
+        analytics = _get_error_analytics(app)
+        if analytics is not None:
+            try:
+                analytics.record_error(
+                    source="layer3.api.tasks",
+                    message=str(e),
+                    error_type=type(e).__name__,
+                    metadata={"task_id": task_id, "task_type": request.task_type},
+                )
+            except Exception:
+                pass
     finally:
         task_store[task_id]["updated_at"] = datetime.now(timezone.utc)
 

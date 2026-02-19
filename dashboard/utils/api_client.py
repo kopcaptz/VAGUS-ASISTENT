@@ -135,3 +135,103 @@ class VagusAPIClient:
             )
         resp.raise_for_status()
         return resp.json()
+
+    def get_dead_letter_queue(
+        self,
+        *,
+        limit: int = 100,
+        status: Optional[str] = None,
+        agent_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        if not HTTPX_AVAILABLE:
+            return []
+        params = [f"limit={int(limit)}"]
+        if status:
+            params.append(f"status={status}")
+        if agent_type:
+            params.append(f"agent_type={agent_type}")
+        query = "&".join(params)
+        with httpx.Client(timeout=10) as client:
+            resp = client.get(
+                f"{self.base_url}/admin/dead-letter-queue?{query}",
+                headers=self._headers,
+            )
+        resp.raise_for_status()
+        return resp.json()
+
+    def retry_dead_letter_task(
+        self,
+        task_id: str,
+        *,
+        prompt: Optional[str] = None,
+        task_type: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        if not HTTPX_AVAILABLE:
+            raise RuntimeError("httpx not installed")
+        payload: Dict[str, Any] = {}
+        if prompt is not None:
+            payload["prompt"] = prompt
+        if task_type is not None:
+            payload["task_type"] = task_type
+        if metadata is not None:
+            payload["metadata"] = metadata
+        with httpx.Client(timeout=60) as client:
+            resp = client.post(
+                f"{self.base_url}/admin/dead-letter-queue/{task_id}/retry",
+                json=payload,
+                headers=self._headers,
+            )
+        resp.raise_for_status()
+        return resp.json()
+
+    def mark_dead_letter_manual_fix(self, task_id: str, note: str) -> Dict[str, Any]:
+        if not HTTPX_AVAILABLE:
+            raise RuntimeError("httpx not installed")
+        with httpx.Client(timeout=20) as client:
+            resp = client.post(
+                f"{self.base_url}/admin/dead-letter-queue/{task_id}/manual-fix",
+                json={"note": note},
+                headers=self._headers,
+            )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_circuit_breakers(self) -> Dict[str, Any]:
+        if not HTTPX_AVAILABLE:
+            return {}
+        with httpx.Client(timeout=10) as client:
+            resp = client.get(
+                f"{self.base_url}/admin/circuit-breakers",
+                headers=self._headers,
+            )
+        resp.raise_for_status()
+        return resp.json()
+
+    def reset_circuit_breaker(self, provider_id: str) -> Dict[str, Any]:
+        if not HTTPX_AVAILABLE:
+            raise RuntimeError("httpx not installed")
+        with httpx.Client(timeout=10) as client:
+            resp = client.post(
+                f"{self.base_url}/admin/circuit-breakers/{provider_id}/reset",
+                headers=self._headers,
+            )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_error_analytics(
+        self,
+        *,
+        window_minutes: int = 60,
+        top_sources_limit: int = 10,
+    ) -> Dict[str, Any]:
+        if not HTTPX_AVAILABLE:
+            return {}
+        with httpx.Client(timeout=20) as client:
+            resp = client.get(
+                f"{self.base_url}/admin/error-analytics"
+                f"?window_minutes={int(window_minutes)}&top_sources_limit={int(top_sources_limit)}",
+                headers=self._headers,
+            )
+        resp.raise_for_status()
+        return resp.json()

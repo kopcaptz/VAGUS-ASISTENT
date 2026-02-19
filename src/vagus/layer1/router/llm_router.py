@@ -58,6 +58,9 @@ class LLMRouter:
         fallback_max_retries: int = 3,
         fallback_base_delay: float = 1.0,
         fallback_chain: Optional[list] = None,
+        retry_max_attempts: int = 5,
+        retry_backoff_factor: float = 2.0,
+        retry_retryable_errors: Optional[list[str]] = None,
     ):
         self.config_manager = config_manager
         self.enable_cache = enable_cache
@@ -79,6 +82,12 @@ class LLMRouter:
         self.fallback_handler = FallbackHandler(
             max_retries=fallback_max_retries,
             base_delay=fallback_base_delay,
+            retry_config={
+                "max_attempts": retry_max_attempts,
+                "backoff_factor": retry_backoff_factor,
+                "retryable_errors": retry_retryable_errors
+                or ["timeout", "rate_limit", "network_error"],
+            },
         )
         self.strategy_manager = StrategyManager()
         self.strategy_manager.set_default(default_strategy)

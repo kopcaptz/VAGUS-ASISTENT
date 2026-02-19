@@ -9,6 +9,10 @@ from .alerting import (
     evaluate_alert_rules,
     load_alerting_config_from_yaml,
 )
+from .error_analytics import (
+    ErrorAnalyticsStorage,
+    classify_error,
+)
 
 __all__ = [
     "AlertEvent",
@@ -18,4 +22,6 @@ __all__ = [
     "AlertingService",
     "evaluate_alert_rules",
     "load_alerting_config_from_yaml",
+    "ErrorAnalyticsStorage",
+    "classify_error",
 ]

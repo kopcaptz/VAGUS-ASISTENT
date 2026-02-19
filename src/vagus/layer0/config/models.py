@@ -185,6 +185,14 @@ class SecurityConfig(BaseModel):
         default="audit_trail.db",
         description="SQLite файл для unified audit trail",
     )
+    dead_letter_queue_db_path: str = Field(
+        default="dead_letter_queue.db",
+        description="SQLite файл для Dead Letter Queue",
+    )
+    error_analytics_db_path: str = Field(
+        default="error_analytics.db",
+        description="SQLite файл для error analytics",
+    )
     rate_limit: SecurityRateLimitConfig = Field(default_factory=SecurityRateLimitConfig)
 
 
@@ -223,6 +231,24 @@ class SecretsConfig(BaseModel):
         return value
 
 
+class RetryConfig(BaseModel):
+    """Конфигурация retry/backoff."""
+
+    max_attempts: int = Field(default=5, ge=1, le=20)
+    backoff_factor: float = Field(default=2.0, ge=1.0, le=10.0)
+    retryable_errors: List[str] = Field(
+        default_factory=lambda: ["timeout", "rate_limit", "network_error"]
+    )
+
+
+class TaskTimeoutsConfig(BaseModel):
+    """Таймауты задач по типу агента."""
+
+    researcher: int = Field(default=300, ge=1, le=3600)
+    coder: int = Field(default=600, ge=1, le=3600)
+    analyst: int = Field(default=180, ge=1, le=3600)
+
+
 class AppConfig(BaseModel):
     """Основная конфигурация приложения."""
     version: int = Field(default=1, ge=1, description="Версия конфигурации")
@@ -234,6 +260,11 @@ class AppConfig(BaseModel):
     websocket: WebSocketConfig = Field(default_factory=WebSocketConfig, description="Настройки WebSocket")
     security: SecurityConfig = Field(default_factory=SecurityConfig, description="Security настройки API")
     jwt: JWTConfig = Field(default_factory=JWTConfig, description="Настройки JWT")
+    retry: RetryConfig = Field(default_factory=RetryConfig, description="Retry/backoff настройки")
+    task_timeouts: TaskTimeoutsConfig = Field(
+        default_factory=TaskTimeoutsConfig,
+        description="Таймауты задач по типам агентов",
+    )
     secrets: SecretsConfig = Field(default_factory=SecretsConfig, description="Настройки secrets backend")
     
     @validator('version')

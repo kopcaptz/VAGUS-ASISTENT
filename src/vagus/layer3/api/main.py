@@ -33,15 +33,48 @@ logger = get_logger("layer3.api.main")
 
 def _create_orchestrator():
     """Создаёт полный стек Layer 1 + Layer 2."""
+    return _create_orchestrator_with_config({})
+
+
+def _load_task_timeout_settings(config_data: dict[str, Any]) -> dict[str, float]:
+    defaults = {"researcher": 300.0, "coder": 600.0, "analyst": 180.0}
+    timeout_cfg = config_data.get("task_timeouts", {}) if isinstance(config_data, dict) else {}
+    if not isinstance(timeout_cfg, dict):
+        return defaults
+
+    normalized = dict(defaults)
+    for key in ("researcher", "coder", "analyst"):
+        value = timeout_cfg.get(key)
+        if value is None:
+            continue
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            normalized[key] = parsed
+    return normalized
+
+
+def _create_orchestrator_with_config(
+    runtime_config: dict[str, Any],
+    *,
+    dead_letter_queue=None,
+    error_analytics=None,
+):
+    """Создаёт полный стек Layer 1 + Layer 2 с runtime-конфигурацией."""
     from vagus.layer1 import LLMRouter
+    from vagus.layer1.integration.config_integration import build_router_kwargs
     from vagus.layer2 import create_orchestrator_full
 
-    llm_router = LLMRouter(
-        enable_cache=True,
-        enable_budgeting=True,
-        enable_monitoring=True,
+    router_kwargs = build_router_kwargs(runtime_config)
+    llm_router = LLMRouter(**router_kwargs)
+    orchestrator = create_orchestrator_full(
+        llm_router,
+        dead_letter_queue=dead_letter_queue,
+        task_timeouts=_load_task_timeout_settings(runtime_config),
+        error_analytics=error_analytics,
     )
-    orchestrator = create_orchestrator_full(llm_router)
     return llm_router, orchestrator
 
 
@@ -148,6 +181,14 @@ def _load_security_settings(config_data: dict[str, Any]) -> dict[str, Any]:
             "redis_url": redis_url,
         },
         "audit_db_path": security_cfg.get("audit_db_path", "audit_trail.db"),
+        "dead_letter_queue_db_path": security_cfg.get(
+            "dead_letter_queue_db_path",
+            "dead_letter_queue.db",
+        ),
+        "error_analytics_db_path": security_cfg.get(
+            "error_analytics_db_path",
+            "error_analytics.db",
+        ),
     }
 
 
@@ -178,14 +219,31 @@ def _load_secrets_settings(config_data: dict[str, Any]) -> dict[str, Any]:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Жизненный цикл приложения: инициализация и завершение."""
-    llm_router, orchestrator = _create_orchestrator()
+    from vagus.layer2.dead_letter_queue import DeadLetterQueueStorage
+    from vagus.monitoring.error_analytics import ErrorAnalyticsStorage
+
+    runtime_config = getattr(app.state, "runtime_config", {})
+    security_settings = getattr(app.state, "security_settings", {})
+    dead_letter_queue = DeadLetterQueueStorage(
+        str(security_settings.get("dead_letter_queue_db_path", "dead_letter_queue.db"))
+    )
+    error_analytics = ErrorAnalyticsStorage(
+        str(security_settings.get("error_analytics_db_path", "error_analytics.db"))
+    )
+
+    llm_router, orchestrator = _create_orchestrator_with_config(
+        runtime_config,
+        dead_letter_queue=dead_letter_queue,
+        error_analytics=error_analytics,
+    )
     await llm_router.initialize()
 
     app.state.llm_router = llm_router
     app.state.orchestrator = orchestrator
+    app.state.dead_letter_queue = dead_letter_queue
+    app.state.error_analytics = error_analytics
     app.state.start_time = time.monotonic()
     app.state.websocket_settings = getattr(app.state, "websocket_settings", WebSocketRuntimeSettings())
-    security_settings = getattr(app.state, "security_settings", {})
     audit_db_path = security_settings.get("audit_db_path", "audit_trail.db")
     app.state.audit_trail = AuditTrail(db_path=str(audit_db_path))
     app.state.websocket_audit_storage = WebSocketAuditStorage()

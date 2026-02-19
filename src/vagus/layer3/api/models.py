@@ -126,5 +126,40 @@ class AuditTrailLogEntry(BaseModel):
     ip_address: Optional[str] = None
 
 
+class DeadLetterQueueEntryResponse(BaseModel):
+    id: int
+    task_id: str
+    agent_type: str
+    error_message: str
+    stack_trace: str
+    timestamp: datetime
+    retry_count: int
+    status: str
+    manual_fix_note: Optional[str] = None
+    task_payload: Optional[Dict[str, Any]] = None
+
+
+class DeadLetterQueueManualFixRequest(BaseModel):
+    note: str = Field(..., min_length=1, max_length=5000)
+
+
+class DeadLetterQueueRetryRequest(BaseModel):
+    prompt: Optional[str] = None
+    task_type: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class CircuitBreakerStatsResponse(BaseModel):
+    provider_id: str
+    state: str
+    failure_count: int
+    last_failure_time: Optional[str] = None
+    success_rate: float = 0.0
+    recovery_timeout: int = 0
+    failure_threshold: int = 0
+    total_success_count: int = 0
+    total_failure_count: int = 0
+
+
 class ErrorResponse(BaseModel):
     detail: str

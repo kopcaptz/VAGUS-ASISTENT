@@ -4,16 +4,20 @@ State Machine: PENDING -> IN_PROGRESS -> COMPLETED
 """
 
 import asyncio
+import traceback
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from .communication import CommunicationLayer
 from .agents.base_agent import BaseAgent
+from .dead_letter_queue import DeadLetterQueueStorage
+from .skills import SkillSystem
 from ..layer0.logging import get_logger
 
 if TYPE_CHECKING:
     from .memory.episodic import EpisodicMemory
     from .memory.semantic import SemanticMemory
+    from ..monitoring.error_analytics import ErrorAnalyticsStorage
 
 
 class TaskStatus(str, Enum):
@@ -36,6 +40,10 @@ class TaskOrchestrator:
         agents: Optional[List[BaseAgent]] = None,
         memory: Optional["EpisodicMemory"] = None,
         semantic_memory: Optional["SemanticMemory"] = None,
+        dead_letter_queue: Optional[DeadLetterQueueStorage] = None,
+        task_timeouts: Optional[Dict[str, float]] = None,
+        skill_system: Optional[SkillSystem] = None,
+        error_analytics: Optional["ErrorAnalyticsStorage"] = None,
     ):
         """
         Args:
@@ -48,23 +56,252 @@ class TaskOrchestrator:
         self.agents = agents or []
         self.memory = memory
         self.semantic_memory = semantic_memory
+        self.dead_letter_queue = dead_letter_queue or DeadLetterQueueStorage()
+        self.skill_system = skill_system or SkillSystem()
+        self.error_analytics = error_analytics
         self.logger = get_logger("layer2.orchestrator")
+        self.task_timeouts = self._normalize_task_timeouts(task_timeouts)
+
+    @staticmethod
+    def _normalize_task_timeouts(
+        task_timeouts: Optional[Dict[str, float]],
+    ) -> Dict[str, float]:
+        defaults: Dict[str, float] = {
+            "researcher": 300.0,
+            "coder": 600.0,
+            "analyst": 180.0,
+        }
+        if not isinstance(task_timeouts, dict):
+            return defaults
+        normalized = dict(defaults)
+        for key in ("researcher", "coder", "analyst"):
+            value = task_timeouts.get(key)
+            if value is None:
+                continue
+            try:
+                parsed = float(value)
+                if parsed > 0:
+                    normalized[key] = parsed
+            except (TypeError, ValueError):
+                continue
+        return normalized
 
     def register_agent(self, agent: BaseAgent) -> None:
         """Регистрирует агента."""
         self.agents.append(agent)
         self.logger.info(f"Agent registered: {agent.name}")
 
-    async def execute_task(self, task_id: str, prompt: str, task_type: str = "default") -> Dict[str, Any]:
+    async def is_agent_healthy(self, agent: BaseAgent) -> bool:
+        """Проверяет доступность агента перед назначением задачи."""
+        checker = getattr(agent, "is_available", None)
+        if not callable(checker):
+            return True
+        try:
+            value = checker()
+            if asyncio.iscoroutine(value):
+                value = await value
+            return bool(value)
+        except Exception as exc:
+            self.logger.warning("Health check failed for agent %s: %s", agent.name, exc)
+            return False
+
+    def _normalize_task_category(self, task_type: str) -> str:
+        task_lower = (task_type or "").lower()
+        if any(x in task_lower for x in ("research", "search", "find", "узнай", "найди")):
+            return "researcher"
+        if any(x in task_lower for x in ("code", "programming", "script", "python", "код")):
+            return "coder"
+        if any(
+            x in task_lower
+            for x in ("analysis", "statistics", "insights", "report", "анализ", "отчёт")
+        ):
+            return "analyst"
+        return "default"
+
+    def _resolve_timeout_seconds(self, *, task_type: str, agent: BaseAgent) -> float:
+        agent_key = (getattr(agent, "name", "") or "").lower()
+        if agent_key in self.task_timeouts:
+            return float(self.task_timeouts[agent_key])
+        task_key = self._normalize_task_category(task_type)
+        if task_key in self.task_timeouts:
+            return float(self.task_timeouts[task_key])
+        return 300.0
+
+    def _extract_error_message(self, result: Dict[str, Any]) -> str:
+        if result.get("error"):
+            return str(result.get("error"))
+        if result.get("success") is False:
+            return "Task finished with success=False"
+        return "Unknown task error"
+
+    def _result_has_error(self, result: Any) -> bool:
+        if not isinstance(result, dict):
+            return False
+        if result.get("error"):
+            return True
+        if result.get("success") is False:
+            return True
+        return False
+
+    def _record_failure(
+        self,
+        *,
+        task_id: str,
+        agent_type: str,
+        error_message: str,
+        stack_trace: str,
+        task_type: str,
+        prompt: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        retry_count = 0
+        if isinstance(metadata, dict):
+            try:
+                retry_count = int(metadata.get("retry_count", 0) or 0)
+            except (TypeError, ValueError):
+                retry_count = 0
+        payload = {
+            "prompt": prompt,
+            "task_type": task_type,
+            "metadata": metadata or {},
+        }
+        try:
+            self.dead_letter_queue.add_failed_task(
+                task_id=task_id,
+                agent_type=agent_type or "unknown",
+                error_message=error_message,
+                stack_trace=stack_trace or "n/a",
+                retry_count=retry_count,
+                task_payload=payload,
+            )
+        except Exception as exc:
+            self.logger.warning("Failed to persist DLQ record for task %s: %s", task_id, exc)
+
+        if self.error_analytics is not None:
+            try:
+                self.error_analytics.record_error(
+                    source=f"layer2.orchestrator.{agent_type or 'unknown'}",
+                    message=error_message,
+                    error_type="task_failure",
+                    metadata={
+                        "task_id": task_id,
+                        "task_type": task_type,
+                        "retry_count": retry_count,
+                    },
+                )
+            except Exception as exc:
+                self.logger.warning(
+                    "Failed to persist error analytics for task %s: %s",
+                    task_id,
+                    exc,
+                )
+
+    def _build_simple_pseudocode(self, prompt: str) -> str:
+        return (
+            "PSEUDOCODE:\n"
+            "1. Parse the user request.\n"
+            "2. Define input and expected output.\n"
+            "3. Implement core algorithm step by step.\n"
+            "4. Add edge-case checks.\n"
+            f"5. Validate result for request: {prompt[:200]}"
+        )
+
+    def _build_simple_summary(self, prompt: str) -> str:
+        normalized = " ".join((prompt or "").split())
+        if not normalized:
+            return "Simple summary: no content provided."
+        if len(normalized) <= 220:
+            return f"Simple summary: {normalized}"
+        return f"Simple summary: {normalized[:220]}..."
+
+    async def _apply_graceful_degradation(
+        self,
+        *,
+        task_id: str,
+        prompt: str,
+        task_type: str,
+        reason: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        category = self._normalize_task_category(task_type)
+        if category == "researcher":
+            search_result = await self.skill_system.use_skill("search_web", query=prompt)
+            content = (
+                "Researcher unavailable. Used web-search fallback.\n"
+                f"{search_result}"
+            )
+            return {
+                "content": content,
+                "search_raw": search_result,
+                "metadata": {
+                    "agent": "fallback",
+                    "fallback_strategy": "web_search",
+                    "degraded": True,
+                    "reason": reason,
+                },
+            }
+        if category == "coder":
+            return {
+                "content": self._build_simple_pseudocode(prompt),
+                "metadata": {
+                    "agent": "fallback",
+                    "fallback_strategy": "pseudocode",
+                    "degraded": True,
+                    "reason": reason,
+                },
+            }
+        if category == "analyst":
+            return {
+                "content": self._build_simple_summary(prompt),
+                "metadata": {
+                    "agent": "fallback",
+                    "fallback_strategy": "simple_summary",
+                    "degraded": True,
+                    "reason": reason,
+                },
+            }
+        return None
+
+    async def execute_task(
+        self,
+        task_id: str,
+        prompt: str,
+        task_type: str = "default",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """
         Выполняет задачу. Скелет — выбор агента и вызов process().
         Записывает шаги в EpisodicMemory при наличии.
         При наличии SemanticMemory: ищет похожие задачи и добавляет контекст.
         """
         self.logger.info(f"Task {task_id}: {task_type} — PENDING")
+        if not self.agents:
+            return {"error": f"No agent for task_type={task_type}"}
+
         agent = self._select_agent(task_type)
         if not agent:
+            degraded = await self._apply_graceful_degradation(
+                task_id=task_id,
+                prompt=prompt,
+                task_type=task_type,
+                reason="No capable agent registered",
+                metadata=metadata,
+            )
+            if degraded is not None:
+                return degraded
             return {"error": f"No agent for task_type={task_type}"}
+
+        if not await self.is_agent_healthy(agent):
+            degraded = await self._apply_graceful_degradation(
+                task_id=task_id,
+                prompt=prompt,
+                task_type=task_type,
+                reason=f"Agent '{agent.name}' is unavailable",
+                metadata=metadata,
+            )
+            if degraded is not None:
+                return degraded
+            return {"error": f"Agent '{agent.name}' is unavailable"}
 
         # Поиск похожих задач и извлечение контекста
         context_prefix = ""
@@ -77,10 +314,39 @@ class TaskOrchestrator:
                 )
 
         enhanced_prompt = f"{context_prefix}{prompt}" if context_prefix else prompt
-        task = {"task_id": task_id, "prompt": enhanced_prompt, "task_type": task_type}
+        task = {
+            "task_id": task_id,
+            "prompt": enhanced_prompt,
+            "task_type": task_type,
+            "metadata": metadata or {},
+        }
 
         try:
-            result = await agent.process(task)
+            timeout_seconds = self._resolve_timeout_seconds(task_type=task_type, agent=agent)
+            result = await asyncio.wait_for(agent.process(task), timeout=timeout_seconds)
+
+            if self._result_has_error(result):
+                error_message = self._extract_error_message(result)
+                self.logger.warning("Task %s returned logical error: %s", task_id, error_message)
+                self._record_failure(
+                    task_id=task_id,
+                    agent_type=agent.name,
+                    error_message=error_message,
+                    stack_trace="n/a",
+                    task_type=task_type,
+                    prompt=prompt,
+                    metadata=metadata,
+                )
+                if self.memory:
+                    self.memory.add_step(
+                        task_id,
+                        agent.name,
+                        "process",
+                        result,
+                        metadata={"task_type": task_type, "failed": True},
+                    )
+                return result
+
             if self.memory:
                 self.memory.add_step(
                     task_id,
@@ -99,8 +365,42 @@ class TaskOrchestrator:
             await self.communication.publish_result(task_id, result)
             self.logger.info(f"Task {task_id}: COMPLETED")
             return result
+        except asyncio.TimeoutError:
+            error_message = (
+                f"Task timed out after {self._resolve_timeout_seconds(task_type=task_type, agent=agent)}s"
+            )
+            self.logger.error("Task %s timeout for agent %s", task_id, agent.name)
+            stack = traceback.format_exc()
+            self._record_failure(
+                task_id=task_id,
+                agent_type=agent.name,
+                error_message=error_message,
+                stack_trace=stack,
+                task_type=task_type,
+                prompt=prompt,
+                metadata=metadata,
+            )
+            if self.memory:
+                self.memory.add_step(
+                    task_id,
+                    agent.name,
+                    "process",
+                    {"error": error_message},
+                    metadata={"task_type": task_type, "failed": True, "timeout": True},
+                )
+            return {"error": error_message}
         except Exception as e:
             self.logger.error(f"Task {task_id} failed: {e}")
+            stack = traceback.format_exc()
+            self._record_failure(
+                task_id=task_id,
+                agent_type=agent.name,
+                error_message=str(e),
+                stack_trace=stack,
+                task_type=task_type,
+                prompt=prompt,
+                metadata=metadata,
+            )
             if self.memory:
                 self.memory.add_step(
                     task_id,
@@ -136,6 +436,27 @@ class TaskOrchestrator:
 
             agent = self._select_agent(step_type)
             if not agent:
+                degraded = await self._apply_graceful_degradation(
+                    task_id=step_task_id,
+                    prompt=prompt,
+                    task_type=step_type,
+                    reason="No capable agent for step",
+                    metadata={"step_index": i, "parent_task_id": task_id},
+                )
+                if degraded is not None:
+                    steps_results.append(degraded)
+                    if self.memory:
+                        self.memory.add_step(
+                            task_id,
+                            "fallback",
+                            "multi_step",
+                            degraded,
+                            metadata={"step_index": i, "step_type": step_type, "degraded": True},
+                        )
+                    context["previous_steps"].append(
+                        {"content": degraded.get("content", ""), "result": degraded}
+                    )
+                    continue
                 err = {"error": f"No agent for type={step_type}", "step_index": i}
                 steps_results.append(err)
                 if self.memory:
@@ -151,6 +472,35 @@ class TaskOrchestrator:
                     "steps_results": steps_results,
                 }
 
+            if not await self.is_agent_healthy(agent):
+                degraded = await self._apply_graceful_degradation(
+                    task_id=step_task_id,
+                    prompt=prompt,
+                    task_type=step_type,
+                    reason=f"Agent '{agent.name}' is unavailable for step",
+                    metadata={"step_index": i, "parent_task_id": task_id},
+                )
+                if degraded is not None:
+                    steps_results.append(degraded)
+                    if self.memory:
+                        self.memory.add_step(
+                            task_id,
+                            "fallback",
+                            "multi_step",
+                            degraded,
+                            metadata={"step_index": i, "step_type": step_type, "degraded": True},
+                        )
+                    context["previous_steps"].append(
+                        {"content": degraded.get("content", ""), "result": degraded}
+                    )
+                    continue
+                err = {
+                    "error": f"Agent '{agent.name}' is unavailable",
+                    "step_index": i,
+                }
+                steps_results.append(err)
+                return {"error": err["error"], "steps_results": steps_results}
+
             task = {
                 "task_id": step_task_id,
                 "prompt": prompt,
@@ -158,7 +508,11 @@ class TaskOrchestrator:
             }
 
             try:
-                result = await agent.process(task, context=context)
+                timeout_seconds = self._resolve_timeout_seconds(task_type=step_type, agent=agent)
+                result = await asyncio.wait_for(
+                    agent.process(task, context=context),
+                    timeout=timeout_seconds,
+                )
                 steps_results.append(result)
 
                 if self.memory:
@@ -181,6 +535,15 @@ class TaskOrchestrator:
 
             except Exception as e:
                 self.logger.error(f"Step {i} failed: {e}")
+                self._record_failure(
+                    task_id=step_task_id,
+                    agent_type=agent.name,
+                    error_message=str(e),
+                    stack_trace=traceback.format_exc(),
+                    task_type=step_type,
+                    prompt=prompt,
+                    metadata={"step_index": i, "parent_task_id": task_id},
+                )
                 err_result = {"error": str(e), "step_index": i}
                 steps_results.append(err_result)
                 if self.memory:

@@ -34,16 +34,17 @@
 - **Слой 1**: Ядро LLM
   - Провайдеры: OpenAI, Anthropic, DeepSeek, OpenRouter, Google
   - Стратегии балансировки: cost, latency, quality, hybrid
-  - Fallback с Circuit Breaker и exponential backoff
+  - Fallback с Circuit Breaker и автоматическим retry (exponential backoff)
   - Кэширование с TTL, бюджетирование, мониторинг (SQLite)
 - **Слой 2**: Агентная система
   - 3 агента: Researcher, Coder, Analyst
   - 2 типа памяти: Episodic (краткосрочная), Semantic (векторный поиск)
   - Параллельное и многошаговое выполнение задач
+  - Dead Letter Queue (DLQ), task timeouts, graceful degradation
 - **Слой 3**: Интерфейсы
   - REST API (FastAPI) с JWT-аутентификацией и усиленным WebSocket
   - CLI (Typer) с rich-форматированием
-  - Web Dashboard (Streamlit, 5 страниц)
+  - Web Dashboard (Streamlit, 7 страниц)
   - Telegram Bot (aiogram 3.x)
   - Monitoring & Observability:
     - Prometheus endpoint `/metrics`
@@ -106,6 +107,12 @@ make docker-up
 | DELETE | `/api/v1/tasks/{id}` | Отменить задачу |
 | GET | `/api/v1/tasks/ws/audit-log` | WebSocket audit log (admin only) |
 | GET | `/api/v1/admin/audit-logs` | Unified audit trail (admin only) |
+| GET | `/api/v1/admin/dead-letter-queue` | Dead Letter Queue (admin only) |
+| POST | `/api/v1/admin/dead-letter-queue/{task_id}/retry` | Retry failed task from DLQ (admin only) |
+| POST | `/api/v1/admin/dead-letter-queue/{task_id}/manual-fix` | Mark DLQ task as manually fixed (admin only) |
+| GET | `/api/v1/admin/circuit-breakers` | Circuit breaker dashboard data (admin only) |
+| POST | `/api/v1/admin/circuit-breakers/{provider_id}/reset` | Manual circuit breaker reset (admin only) |
+| GET | `/api/v1/admin/error-analytics` | Error classification analytics (admin only) |
 | GET | `/api/v1/agents` | Список агентов |
 | GET | `/api/v1/status` | Статус системы |
 | WS | `/api/v1/tasks/ws/{id}` | WebSocket стриминг |
@@ -181,6 +188,31 @@ websocket:
   - assets: `monitoring/grafana/*.json`
   - stack: `monitoring/docker-compose.yml`
 
+## Error Handling & Resilience (Stage 4)
+
+- **Dead Letter Queue (DLQ)** в SQLite (`dead_letter_queue`)
+  - Поля: `task_id`, `agent_type`, `error_message`, `stack_trace`, `timestamp`, `retry_count`
+  - Admin API: просмотр, retry, manual fix
+- **Automatic retry** c exponential backoff:
+  - интервалы: `1s, 2s, 4s, 8s, 16s`
+  - максимум `5` попыток
+  - retryable ошибки по ключам (`timeout`, `rate_limit`, `network_error`)
+- **Task timeout per agent type**:
+  - `researcher=300s`, `coder=600s`, `analyst=180s`
+  - автоматическая отмена через `asyncio.wait_for`
+- **Graceful degradation**:
+  - Researcher unavailable → web search fallback
+  - Coder unavailable → pseudocode fallback
+  - Analyst unavailable → simple summary fallback
+  - health-check перед назначением задачи
+- **Circuit Breaker dashboard**:
+  - realtime state (`closed/open/half-open`), failure count, last failure time, success rate
+  - manual reset
+  - history charts
+- **Error analytics**:
+  - классификация: transient / permanent / infrastructure
+  - error rate by type, top sources, correlation snapshot
+
 ## CLI
 
 ```bash
@@ -206,7 +238,7 @@ vagus admin status
 ## Тестирование
 
 ```bash
-# Все тесты (250+)
+# Все тесты (280+)
 make test
 
 # По слоям
@@ -230,7 +262,7 @@ VAGUS-ASISTENT/
 │       ├── api/         # FastAPI + JWT + WebSocket
 │       ├── cli/         # Typer CLI
 │       └── channels/    # Telegram Bot
-├── dashboard/           # Streamlit Dashboard (включая Performance page)
+├── dashboard/           # Streamlit Dashboard (Tasks/Monitoring/Agents/Settings/Performance/CircuitBreakers/ErrorAnalytics)
 ├── monitoring/          # Grafana dashboards + Prometheus config + compose
 ├── tests/               # 200+ тестов
 ├── configs/             # Конфигурация YAML
