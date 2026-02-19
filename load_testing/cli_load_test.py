@@ -76,7 +76,7 @@ async def run_load(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="CLI load test")
-    parser.add_argument("--command", default="python -m vagus --help")
+    parser.add_argument("--command", default="python3 -m vagus --help")
     parser.add_argument("--concurrent-users", type=int, default=100)
     parser.add_argument("--requests-per-user", type=int, default=10)
     parser.add_argument("--output-dir", default="load_testing/reports")

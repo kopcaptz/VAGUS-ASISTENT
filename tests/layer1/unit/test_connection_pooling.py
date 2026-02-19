@@ -39,7 +39,11 @@ def test_openai_provider_uses_shared_http_client(monkeypatch):
             self.kwargs = kwargs
 
     monkeypatch.setattr("vagus.layer1.providers.openai_provider.OPENAI_AVAILABLE", True)
-    monkeypatch.setattr("vagus.layer1.providers.openai_provider.AsyncOpenAI", _DummyOpenAIClient)
+    monkeypatch.setattr(
+        "vagus.layer1.providers.openai_provider.AsyncOpenAI",
+        _DummyOpenAIClient,
+        raising=False,
+    )
 
     provider = OpenAIProvider(api_key="test-key")
     sdk_client = provider._get_client()

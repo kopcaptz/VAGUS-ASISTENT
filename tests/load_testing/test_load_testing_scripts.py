@@ -1,6 +1,7 @@
 """Tests for load testing helper scripts."""
 
 import json
+import sys
 
 import pytest
 
@@ -34,7 +35,7 @@ async def test_websocket_load_test_runner_returns_summary():
 @pytest.mark.asyncio
 async def test_cli_load_test_runner_returns_summary():
     summary = await cli_load_test.run_load(
-        command="python -c \"print('ok')\"",
+        command=f"{sys.executable} -c \"print('ok')\"",
         concurrent_users=2,
         requests_per_user=1,
     )
