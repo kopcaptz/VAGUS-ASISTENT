@@ -14,6 +14,7 @@ from .models import (
     PluginsSandboxConfig,
     PluginsMarketplaceConfig,
     PluginsSecurityConfig,
+    PluginsHotReloadConfig,
 )
 from .secrets_manager import SecretsManager
 
@@ -29,5 +30,6 @@ __all__ = [
     'PluginsSandboxConfig',
     'PluginsMarketplaceConfig',
     'PluginsSecurityConfig',
+    'PluginsHotReloadConfig',
     'SecretsManager',
 ]

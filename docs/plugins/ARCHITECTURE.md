@@ -19,6 +19,11 @@ src/vagus/plugins/
 ├── loader/         # Local/Git/PyPI plugin loaders
 ├── sandbox/        # Sandboxed execution abstraction
 ├── hooks/          # Hook registration and execution system
+├── hot_reload/     # File watching and graceful reload
+├── dependencies/   # Plugin dependency resolver
+├── analytics/      # Usage metrics and recommendations
+├── tools/          # Plugin developer tooling (templates)
+├── backup/         # Backup and restore
 ├── security/       # Signature verification and trust store
 ├── monitoring/     # Runtime health and anomaly monitoring
 └── marketplace/    # Marketplace integration primitives

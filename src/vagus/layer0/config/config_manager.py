@@ -303,6 +303,11 @@ class ConfigManager:
                     "max_plugin_dependencies": 10,
                     "banned_imports": ["os.system", "subprocess.Popen", "ctypes"],
                 },
+                "hot_reload": {
+                    "enabled": True,
+                    "watch_directories": ["./plugins", "~/.vagus/plugins"],
+                    "debounce_ms": 500,
+                },
                 "marketplace": {
                     "url": "https://plugins.vagus.ai",
                     "cache_ttl_hours": 24,

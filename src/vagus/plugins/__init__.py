@@ -12,6 +12,7 @@ from .core import (
     PluginState,
 )
 from .hooks import HookSystem, SUPPORTED_HOOKS
+from .hot_reload import HotReloadConfig, HotReloadManager, WATCHDOG_AVAILABLE
 from .loader import (
     DependencyVettingError,
     DependencyResolutionError,
@@ -25,8 +26,16 @@ from .loader import (
     SecurityScanError,
     SignatureValidationError,
 )
-from .marketplace import MarketplaceClient
+from .marketplace import MarketplaceClient, create_marketplace_app
 from .monitoring import PluginHealthStatus, PluginMonitor, PluginRuntimeMetrics
+from .analytics import PluginAnalytics, PluginUsageMetrics
+from .dependencies import (
+    DependencyEdge,
+    PluginDependencyNode,
+    PluginDependencyResolver,
+)
+from .tools import PluginTemplateError, PluginTemplateGenerator, create_plugin_template
+from .backup import PluginBackupError, PluginBackupManager
 from .registry import PluginRegistry
 from .sandbox import (
     SandboxEngine,
@@ -64,6 +73,9 @@ __all__ = [
     "SecurePluginLoader",
     "HookSystem",
     "SUPPORTED_HOOKS",
+    "HotReloadManager",
+    "HotReloadConfig",
+    "WATCHDOG_AVAILABLE",
     "SandboxLimits",
     "SandboxExecutionError",
     "SandboxExecutor",
@@ -78,5 +90,16 @@ __all__ = [
     "PluginMonitor",
     "PluginRuntimeMetrics",
     "PluginHealthStatus",
+    "PluginAnalytics",
+    "PluginUsageMetrics",
+    "PluginDependencyResolver",
+    "PluginDependencyNode",
+    "DependencyEdge",
+    "PluginTemplateGenerator",
+    "PluginTemplateError",
+    "create_plugin_template",
+    "PluginBackupManager",
+    "PluginBackupError",
     "MarketplaceClient",
+    "create_marketplace_app",
 ]
