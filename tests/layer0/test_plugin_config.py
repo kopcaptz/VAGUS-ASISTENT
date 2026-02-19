@@ -12,7 +12,7 @@ from vagus.layer0.config.models import AppConfig
 
 
 def test_app_config_plugins_defaults():
-    config = AppConfig(global={})
+    config = AppConfig.model_validate({"global": {}})
 
     assert config.plugins.enabled is True
     assert config.plugins.auto_discover is True
@@ -23,7 +23,12 @@ def test_app_config_plugins_defaults():
 
 def test_app_config_plugins_rejects_empty_scan_directories():
     with pytest.raises(ValidationError):
-        AppConfig(global={}, plugins={"scan_directories": []})
+        AppConfig.model_validate(
+            {
+                "global": {},
+                "plugins": {"scan_directories": []},
+            }
+        )
 
 
 def test_example_yaml_has_plugin_section():
