@@ -51,6 +51,19 @@ metrics.db
 *.log
 logs/
 
+# Docker volumes
+postgres-data/
+redis-data/
+prometheus-data/
+grafana-data/
+
+# SSL certificates
+certs/
+
+# Production env (secrets)
+.env.local
+.env.production.local
+
 # OS
 .DS_Store
 Thumbs.db

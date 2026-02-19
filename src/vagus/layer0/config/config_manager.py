@@ -16,13 +16,15 @@ from .models import AppConfig
 # Импорты для hot-reload (опционально)
 try:
     from watchdog.observers import Observer
-    from watchdog.events import FileSystemEventHandler
+    from watchdog.events import FileSystemEventHandler as _BaseHandler
     WATCHDOG_AVAILABLE = True
 except ImportError:
     WATCHDOG_AVAILABLE = False
+    _BaseHandler = object  # type: ignore[assignment,misc]
+    Observer = None  # type: ignore[assignment,misc]
 
 
-class ConfigReloadHandler(FileSystemEventHandler):
+class ConfigReloadHandler(_BaseHandler):
     """Обработчик событий файловой системы для hot-reload."""
     
     def __init__(self, callback: Callable, config_path: Path, env_path: Path):
