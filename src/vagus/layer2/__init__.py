@@ -8,6 +8,7 @@ from .communication import CommunicationLayer
 from .agents.base_agent import BaseAgent
 from .agents.coder import CoderAgent
 from .agents.researcher import ResearcherAgent
+from .memory import EpisodicMemory
 from .orchestrator import TaskOrchestrator
 from .skills import SkillSystem
 
@@ -29,6 +30,7 @@ __all__ = [
     "CommunicationLayer",
     "BaseAgent",
     "CoderAgent",
+    "EpisodicMemory",
     "ResearcherAgent",
     "TaskOrchestrator",
     "SkillSystem",

@@ -4,11 +4,14 @@ State Machine: PENDING -> IN_PROGRESS -> COMPLETED
 """
 
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from .communication import CommunicationLayer
 from .agents.base_agent import BaseAgent
 from ..layer0.logging import get_logger
+
+if TYPE_CHECKING:
+    from .memory.episodic import EpisodicMemory
 
 
 class TaskStatus(str, Enum):
@@ -29,14 +32,17 @@ class TaskOrchestrator:
         self,
         communication: CommunicationLayer,
         agents: Optional[List[BaseAgent]] = None,
+        memory: Optional["EpisodicMemory"] = None,
     ):
         """
         Args:
             communication: Слой коммуникации
             agents: Список агентов (Researcher, Coder, ...)
+            memory: EpisodicMemory для записи истории выполнения (опционально)
         """
         self.communication = communication
         self.agents = agents or []
+        self.memory = memory
         self.logger = get_logger("layer2.orchestrator")
 
     def register_agent(self, agent: BaseAgent) -> None:
@@ -47,20 +53,37 @@ class TaskOrchestrator:
     async def execute_task(self, task_id: str, prompt: str, task_type: str = "default") -> Dict[str, Any]:
         """
         Выполняет задачу. Скелет — выбор агента и вызов process().
+        Записывает шаги в EpisodicMemory при наличии.
         """
         self.logger.info(f"Task {task_id}: {task_type} — PENDING")
         agent = self._select_agent(task_type)
         if not agent:
             return {"error": f"No agent for task_type={task_type}"}
 
-        task = {"prompt": prompt, "task_type": task_type}
+        task = {"task_id": task_id, "prompt": prompt, "task_type": task_type}
         try:
             result = await agent.process(task)
+            if self.memory:
+                self.memory.add_step(
+                    task_id,
+                    agent.name,
+                    "process",
+                    result,
+                    metadata={"task_type": task_type, "prompt": prompt[:100]},
+                )
             await self.communication.publish_result(task_id, result)
             self.logger.info(f"Task {task_id}: COMPLETED")
             return result
         except Exception as e:
             self.logger.error(f"Task {task_id} failed: {e}")
+            if self.memory:
+                self.memory.add_step(
+                    task_id,
+                    agent.name,
+                    "process",
+                    {"error": str(e)},
+                    metadata={"task_type": task_type, "failed": True},
+                )
             return {"error": str(e)}
 
     def _select_agent(self, task_type: str) -> Optional[BaseAgent]:
