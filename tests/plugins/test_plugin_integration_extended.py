@@ -58,6 +58,8 @@ def test_marketplace_client_works_with_marketplace_api_and_offline_cache(tmp_pat
     client = MarketplaceClient(url="http://testserver", transport=transport)
     found = client.search_plugins(query="integration", category="testing", limit=5)
     assert found and found[0]["plugin_id"] == "integration_plugin"
+    online_details = client.get_plugin_details("integration_plugin")
+    assert online_details["plugin_id"] == "integration_plugin"
 
     client.set_offline_mode(True)
     details = client.get_plugin_details("integration_plugin")

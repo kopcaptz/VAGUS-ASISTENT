@@ -10,6 +10,8 @@ import re
 import subprocess
 import sys
 import tempfile
+import types
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Sequence
@@ -89,14 +91,8 @@ class BasePluginLoader:
     ) -> tuple[object, object]:
         """Import module/object declared by manifest entry point."""
         module_name, _, object_name = manifest.entry_point.partition(":")
-
-        for path in search_paths:
-            path_str = str(path.resolve())
-            if path_str not in sys.path:
-                sys.path.insert(0, path_str)
-
         try:
-            module = importlib.import_module(module_name)
+            module = self._import_module_from_search_paths(module_name, search_paths)
         except Exception as exc:
             raise EntryPointImportError(
                 f"Cannot import module '{module_name}' for plugin '{manifest.name}': {exc}"
@@ -111,6 +107,51 @@ class BasePluginLoader:
             )
 
         return module, getattr(module, object_name)
+
+    def _import_module_from_search_paths(self, module_name: str, search_paths: Sequence[Path]) -> object:
+        module_parts = module_name.split(".")
+        module_relative_path = Path(*module_parts)
+
+        for root in search_paths:
+            root_path = Path(root).expanduser().resolve()
+            module_file = root_path / module_relative_path.with_suffix(".py")
+            package_init = root_path / module_relative_path / "__init__.py"
+
+            if module_file.exists():
+                return self._load_module_from_file(module_name, module_file)
+
+            if package_init.exists():
+                return self._load_module_from_file(
+                    module_name,
+                    package_init,
+                    is_package=True,
+                )
+
+        for path in search_paths:
+            path_str = str(Path(path).expanduser().resolve())
+            if path_str not in sys.path:
+                sys.path.insert(0, path_str)
+        return importlib.import_module(module_name)
+
+    def _load_module_from_file(self, module_name: str, file_path: Path, *, is_package: bool = False) -> object:
+        unique_module_name = (
+            f"_vagus_plugin_{module_name.replace('.', '_')}_{uuid.uuid4().hex}"
+        )
+
+        source_text = file_path.read_text(encoding="utf-8")
+        code = compile(source_text, str(file_path), "exec")
+
+        module = types.ModuleType(unique_module_name)
+        module.__file__ = str(file_path)
+        if is_package:
+            module.__package__ = unique_module_name
+            module.__path__ = [str(file_path.parent)]  # type: ignore[attr-defined]
+        else:
+            module.__package__ = unique_module_name.rpartition(".")[0]
+
+        sys.modules[unique_module_name] = module
+        exec(code, module.__dict__)
+        return module
 
     def _build_loaded_plugin(
         self,

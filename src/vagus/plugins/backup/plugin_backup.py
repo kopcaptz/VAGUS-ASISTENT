@@ -27,7 +27,7 @@ class PluginBackupManager:
         *,
         name: str = "plugins_config",
     ) -> Path:
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
         filename = f"{name}_{timestamp}.json"
         backup_path = self.backup_root / filename
         payload = {
