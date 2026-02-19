@@ -77,9 +77,9 @@ class ConfigManager:
         """Загружает переменные окружения из .env файла."""
         if self.env_path.exists():
             load_dotenv(self.env_path)
-            print(f"✅ Загружены переменные окружения из {self.env_path}")
+            print(f"[OK] Загружены переменные окружения из {self.env_path}")
         else:
-            print(f"⚠️  Файл .env не найден: {self.env_path}")
+            print(f"[WARN] Файл .env не найден: {self.env_path}")
     
     def _load_yaml(self) -> Dict[str, Any]:
         """Загружает YAML конфигурацию."""
@@ -107,7 +107,7 @@ class ConfigManager:
             if api_key:
                 provider_config['api_key'] = api_key
             elif 'api_key' not in provider_config:
-                print(f"⚠️  API ключ для провайдера {provider_name} не найден")
+                print(f"[WARN] API ключ для провайдера {provider_name} не найден")
         
         return config_data
     
@@ -149,7 +149,7 @@ class ConfigManager:
             self._config = AppConfig(**config_data)
             self._last_modified = current_modified
             
-            print(f"✅ Конфигурация загружена из {self.config_path} (версия: {self._config.version})")
+            print(f"[OK] Конфигурация загружена из {self.config_path} (версия: {self._config.version})")
             
             # Вызываем колбэки
             self._notify_callbacks()
@@ -157,16 +157,16 @@ class ConfigManager:
             return self._config
             
         except ValidationError as e:
-            print(f"❌ Ошибка валидации конфигурации: {e}")
+            print(f"[ERROR] Ошибка валидации конфигурации: {e}")
             raise
         except Exception as e:
-            print(f"❌ Ошибка загрузки конфигурации: {e}")
+            print(f"[ERROR] Ошибка загрузки конфигурации: {e}")
             raise
     
     def _start_hot_reload(self) -> None:
         """Запускает hot-reload наблюдатель."""
         if not WATCHDOG_AVAILABLE:
-            print("⚠️  Watchdog не установлен, hot-reload отключен")
+            print("[WARN] Watchdog не установлен, hot-reload отключен")
             return
         
         try:
@@ -181,17 +181,17 @@ class ConfigManager:
             observer.start()
             self._observers.append(observer)
             
-            print("✅ Hot-reload наблюдатель запущен")
+            print("[OK] Hot-reload наблюдатель запущен")
             
         except Exception as e:
-            print(f"⚠️  Не удалось запустить hot-reload: {e}")
+            print(f"[WARN] Не удалось запустить hot-reload: {e}")
     
     def _hot_reload_callback(self) -> None:
         """Колбэк для hot-reload."""
         try:
             self.load(force_reload=True)
         except Exception as e:
-            print(f"❌ Ошибка при hot-reload: {e}")
+            print(f"[ERROR] Ошибка при hot-reload: {e}")
     
     def _notify_callbacks(self) -> None:
         """Уведомляет зарегистрированные колбэки об изменении конфигурации."""
@@ -199,7 +199,7 @@ class ConfigManager:
             try:
                 callback(self._config)
             except Exception as e:
-                print(f"❌ Ошибка в колбэке конфигурации: {e}")
+                print(f"[ERROR] Ошибка в колбэке конфигурации: {e}")
     
     def register_callback(self, callback: Callable[[AppConfig], None]) -> None:
         """
@@ -209,7 +209,7 @@ class ConfigManager:
             callback: Функция, принимающая AppConfig
         """
         self._callbacks.append(callback)
-        print(f"✅ Зарегистрирован колбэк конфигурации: {callback.__name__}")
+        print(f"[OK] Зарегистрирован колбэк конфигурации: {callback.__name__}")
     
     def get_config(self) -> AppConfig:
         """Возвращает текущую конфигурацию (загружает если нужно)."""
@@ -274,4 +274,4 @@ class ConfigManager:
         with open(self.config_path, 'w', encoding='utf-8') as f:
             yaml.dump(default_config, f, default_flow_style=False, allow_unicode=True)
         
-        print(f"✅ Пример конфигурации сохранён в {self.config_path}")
+        print(f"[OK] Пример конфигурации сохранён в {self.config_path}")
