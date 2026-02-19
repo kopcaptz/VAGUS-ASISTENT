@@ -20,7 +20,7 @@ REFRESH_TOKEN_EXPIRE_SECONDS = 604800  # 7 days
 _USERS_DB: dict[str, dict] = {
     "admin": {
         "username": "admin",
-        "hashed_password": _hash_pw := hashlib.sha256(b"admin").hexdigest(),
+        "hashed_password": hashlib.sha256(b"admin").hexdigest(),
         "role": "admin",
     },
     "user": {
@@ -29,8 +29,6 @@ _USERS_DB: dict[str, dict] = {
         "role": "user",
     },
 }
-
-del _hash_pw
 
 
 def _b64_encode(data: bytes) -> str:

@@ -2,99 +2,171 @@
 
 Многослойная агентная система с мульти-модельным роутером LLM.
 
+## Архитектура
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   СЛОЙ 3: ИНТЕРФЕЙСЫ                        │
+│  REST API (FastAPI) │ CLI (Typer) │ Dashboard │ Telegram    │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────┐
+│              СЛОЙ 2: АГЕНТНАЯ СИСТЕМА                       │
+│  TaskOrchestrator │ Agents (Researcher, Coder, Analyst)     │
+│  EpisodicMemory │ SemanticMemory │ CommunicationLayer       │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────┐
+│                 СЛОЙ 1: ЯДРО LLM                            │
+│  LLMRouter │ 5 провайдеров │ 4 стратегии │ Cache │ Budget  │
+│  Monitoring │ Fallback + Circuit Breaker                    │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────┐
+│              СЛОЙ 0: ФУНДАМЕНТ                              │
+│  ConfigManager │ Pydantic Models │ Hot-Reload │ Logging     │
+└─────────────────────────────────────────────────────────────┘
+```
+
 ## Возможности
 
-- **Слой 0**: Конфигурация, логирование
+- **Слой 0**: Конфигурация (YAML + env), Pydantic-валидация, hot-reload
 - **Слой 1**: Ядро LLM
-  - Роутер с балансировкой нагрузки
   - Провайдеры: OpenAI, Anthropic, DeepSeek, OpenRouter, Google
+  - Стратегии балансировки: cost, latency, quality, hybrid
   - Fallback с Circuit Breaker и exponential backoff
-  - Кэширование с TTL
-  - Бюджетирование (дневные/месячные лимиты)
-  - Мониторинг в SQLite
-  - Стратегии: cost, latency, quality, hybrid
+  - Кэширование с TTL, бюджетирование, мониторинг (SQLite)
+- **Слой 2**: Агентная система
+  - 3 агента: Researcher, Coder, Analyst
+  - 2 типа памяти: Episodic (краткосрочная), Semantic (векторный поиск)
+  - Параллельное и многошаговое выполнение задач
+- **Слой 3**: Интерфейсы
+  - REST API (FastAPI) с JWT-аутентификацией и WebSocket
+  - CLI (Typer) с rich-форматированием
+  - Web Dashboard (Streamlit, 4 страницы)
+  - Telegram Bot (aiogram 3.x)
 
 ## Требования
 
 - Python 3.10+
 - pip
 
-## Установка
+## Быстрый старт
 
 ```bash
-git clone <repository-url>
-cd Vagus_Asistent
+# Клонирование
+git clone https://github.com/kopcaptz/VAGUS-ASISTENT.git
+cd VAGUS-ASISTENT
+
+# Установка
 pip install -r requirements.txt
-```
 
-## Настройка
-
-```bash
+# Настройка
 cp .env.example .env
-# Отредактируйте .env и добавьте API ключи
+# Отредактируйте .env — добавьте API-ключи
+
+# Запуск API
+make run
+
+# Или напрямую:
+PYTHONPATH=src uvicorn vagus.layer3.api.main:app --reload --port 8000
 ```
 
-## Использование
-
-```python
-import asyncio
-from vagus.layer1 import LLMRouter
-
-async def main():
-    router = LLMRouter(
-        enable_cache=True,
-        enable_budgeting=True,
-        fallback_chain=["openai", "anthropic", "deepseek"],
-    )
-    await router.initialize()
-
-    async for chunk in router.route_request(
-        prompt="Привет!",
-        stream=True,
-        priority="normal",
-    ):
-        print(chunk.get("content", ""), end="")
-
-asyncio.run(main())
-```
-
-Запуск примера:
+## Запуск компонентов
 
 ```bash
-PYTHONPATH=src python examples/layer1/basic_usage.py
+# REST API
+make run
+
+# Dashboard (Streamlit)
+make run-dashboard
+
+# Telegram Bot
+make run-telegram
+
+# Docker (все сервисы)
+make docker-up
 ```
 
-## Проверка и тестирование
+## API Endpoints
 
-Быстрая проверка (без API):
+| Метод | Эндпоинт | Описание |
+|:------|:---------|:---------|
+| POST | `/api/v1/auth/token` | Получить JWT-токен |
+| POST | `/api/v1/auth/refresh` | Обновить access_token |
+| POST | `/api/v1/tasks` | Создать задачу |
+| GET | `/api/v1/tasks/{id}` | Статус задачи |
+| GET | `/api/v1/tasks` | Список задач |
+| DELETE | `/api/v1/tasks/{id}` | Отменить задачу |
+| GET | `/api/v1/agents` | Список агентов |
+| GET | `/api/v1/status` | Статус системы |
+| WS | `/api/v1/tasks/ws/{id}` | WebSocket стриминг |
+| GET | `/health` | Health check |
+
+## CLI
 
 ```bash
-PYTHONPATH=src python scripts/verify.py
+# Аутентификация
+vagus login --api-url http://localhost:8000
+
+# Создание задачи
+vagus task create "Найди информацию о Python"
+
+# Статус задачи
+vagus task status <task-id>
+
+# Список задач
+vagus task list
+
+# Список агентов
+vagus agent list
+
+# Статус системы
+vagus admin status
 ```
 
-Тесты:
+## Тестирование
 
 ```bash
-PYTHONPATH=src pytest tests/layer1/unit/ -v
+# Все тесты (169+)
+make test
+
+# По слоям
+make test-layer1
+make test-layer2
+make test-layer3
+
+# Быстрая проверка
+make verify
 ```
 
 ## Структура проекта
 
 ```
-Vagus_Asistent/
-├── src/vagus/          # Исходный код
-│   ├── layer0/         # Конфигурация, логирование
-│   └── layer1/         # Роутер LLM
-├── tests/
-├── docs/
-├── examples/
-└── configs/
+VAGUS-ASISTENT/
+├── src/vagus/
+│   ├── layer0/          # Конфигурация, логирование
+│   ├── layer1/          # LLM Router, провайдеры, кэш, бюджет
+│   ├── layer2/          # Агенты, оркестратор, память
+│   └── layer3/          # REST API, CLI, каналы
+│       ├── api/         # FastAPI + JWT + WebSocket
+│       ├── cli/         # Typer CLI
+│       └── channels/    # Telegram Bot
+├── dashboard/           # Streamlit Dashboard
+├── tests/               # 169+ тестов
+├── configs/             # Конфигурация YAML
+├── docs/                # Документация
+├── Makefile             # Команды сборки
+├── Dockerfile           # Multi-stage Docker
+└── docker-compose.yml   # Все сервисы
 ```
 
 ## Документация
 
-- [TZ_LAYER1.md](TZ_LAYER1.md) — техническое задание Слоя 1
-- [docs/layer1/](docs/layer1/) — API, архитектура, конфигурация
+- [docs/layer1/](docs/layer1/) — Архитектура, API, конфигурация Layer 1
+- [docs/LAYER2_PLAN.md](docs/LAYER2_PLAN.md) — План и результаты Layer 2
+- [docs/LAYER3_DESIGN.md](docs/LAYER3_DESIGN.md) — Дизайн Layer 3
+- [SETUP.md](SETUP.md) — Инструкция по установке
 
 ## Лицензия
 
