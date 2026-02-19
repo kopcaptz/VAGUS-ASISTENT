@@ -103,5 +103,18 @@ class WebSocketStreamChunk(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 
+class WebSocketAuditLogEntry(BaseModel):
+    id: int
+    event_type: str
+    user_id: Optional[str] = None
+    task_id: Optional[str] = None
+    timestamp: datetime
+    message_size_bytes: Optional[int] = None
+    message_type: Optional[str] = None
+    close_code: Optional[int] = None
+    reason: Optional[str] = None
+    duration_seconds: Optional[float] = None
+
+
 class ErrorResponse(BaseModel):
     detail: str

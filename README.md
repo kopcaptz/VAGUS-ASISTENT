@@ -41,7 +41,7 @@
   - 2 типа памяти: Episodic (краткосрочная), Semantic (векторный поиск)
   - Параллельное и многошаговое выполнение задач
 - **Слой 3**: Интерфейсы
-  - REST API (FastAPI) с JWT-аутентификацией и WebSocket
+  - REST API (FastAPI) с JWT-аутентификацией и усиленным WebSocket
   - CLI (Typer) с rich-форматированием
   - Web Dashboard (Streamlit, 4 страницы)
   - Telegram Bot (aiogram 3.x)
@@ -98,10 +98,31 @@ make docker-up
 | GET | `/api/v1/tasks/{id}` | Статус задачи |
 | GET | `/api/v1/tasks` | Список задач |
 | DELETE | `/api/v1/tasks/{id}` | Отменить задачу |
+| GET | `/api/v1/tasks/ws/audit-log` | WebSocket audit log (admin only) |
 | GET | `/api/v1/agents` | Список агентов |
 | GET | `/api/v1/status` | Статус системы |
 | WS | `/api/v1/tasks/ws/{id}` | WebSocket стриминг |
 | GET | `/health` | Health check |
+
+## WebSocket hardening
+
+- Heartbeat: сервер отправляет `ping` каждые `30s`, соединение закрывается при отсутствии `pong` в течение `60s`
+- Лимит входящего сообщения: `10 MB` (`1009 Message too big`)
+- Rate limit на соединение: `100` входящих сообщений в минуту (`1013 Try again later`)
+- Стандартные close codes:
+  - `1000` — normal closure
+  - `1008` — policy violation (например, невалидный токен)
+  - `1009` — message too big
+  - `1011` — internal error
+  - `1013` — try again later (rate limit)
+- Audit logging: события `connect`, `message_sent`, `close` записываются в SQLite (`websocket_audit_log`)
+
+```yaml
+websocket:
+  max_message_size_mb: 10
+  ping_interval_seconds: 30
+  ping_timeout_seconds: 60
+```
 
 ## CLI
 
@@ -163,6 +184,7 @@ VAGUS-ASISTENT/
 
 ## Документация
 
+- [API_REFERENCE.md](API_REFERENCE.md) — REST/WS API (включая WebSocket hardening)
 - [docs/layer1/](docs/layer1/) — Архитектура, API, конфигурация Layer 1
 - [docs/LAYER2_PLAN.md](docs/LAYER2_PLAN.md) — План и результаты Layer 2
 - [docs/LAYER3_DESIGN.md](docs/LAYER3_DESIGN.md) — Дизайн Layer 3

@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from vagus.layer3.api.auth import create_access_token, create_refresh_token
 from vagus.layer3.api.main import create_app
 from vagus.layer3.api.routers.tasks import task_store
+from vagus.layer3.api.websocket_security import WebSocketAuditStorage, WebSocketRuntimeSettings
 
 
 def _make_mock_orchestrator():
@@ -52,7 +53,7 @@ def _make_mock_llm_router():
 
 
 @pytest.fixture
-def app():
+def app(tmp_path):
     """FastAPI app без lifespan (для тестов)."""
     from fastapi import FastAPI
     from vagus.layer3.api.middleware import RateLimitMiddleware
@@ -72,6 +73,10 @@ def app():
     test_app.state.orchestrator = _make_mock_orchestrator()
     test_app.state.llm_router = _make_mock_llm_router()
     test_app.state.start_time = time.monotonic()
+    test_app.state.websocket_settings = WebSocketRuntimeSettings()
+    test_app.state.websocket_audit_storage = WebSocketAuditStorage(
+        str(tmp_path / "websocket_audit.db")
+    )
     return test_app
 
 
