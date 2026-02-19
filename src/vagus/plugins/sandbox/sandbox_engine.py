@@ -159,6 +159,13 @@ class SandboxEngine:
         limit_bytes = int(memory_limit_mb) * 1024 * 1024
         old_limits = resource.getrlimit(resource.RLIMIT_AS)
         hard_limit = old_limits[1]
+        # In many restricted environments, lowering from unlimited hard limit can
+        # be irreversible for the current process (cannot restore soft limit back).
+        # To avoid poisoning host process limits, skip hard RLIMIT enforcement.
+        if hard_limit == resource.RLIM_INFINITY:
+            yield
+            return
+
         soft_limit = limit_bytes if hard_limit == resource.RLIM_INFINITY else min(limit_bytes, hard_limit)
         try:
             resource.setrlimit(resource.RLIMIT_AS, (soft_limit, hard_limit))

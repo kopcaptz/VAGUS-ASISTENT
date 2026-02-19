@@ -71,7 +71,7 @@ async def test_security_integration_secure_loader_and_sandbox(tmp_path: Path):
         "dependencies": [],
         "python_version": ">=3.10",
         "vagus_version": ">=0.1.0",
-        "entry_point": "plugin:Entry",
+        "entry_point": "secure_flow_entry:Entry",
         "hooks": [],
         "permissions": [],
         "runtime_permissions": {
@@ -84,7 +84,7 @@ async def test_security_integration_secure_loader_and_sandbox(tmp_path: Path):
         }
     }
     (plugin_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    (plugin_dir / "plugin.py").write_text(
+    (plugin_dir / "secure_flow_entry.py").write_text(
         "class Entry:\n"
         "    def read_file(self, path):\n"
         "        with open(path, 'r', encoding='utf-8') as fh:\n"
