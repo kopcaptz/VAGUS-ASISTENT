@@ -62,6 +62,43 @@ def main():
         errors.append(f"CircuitBreaker: {e}")
         print(f"[FAIL] CircuitBreaker: {e}")
 
+    # 5. Auto performance benchmark (run only on source changes)
+    try:
+        import asyncio
+
+        from vagus.benchmarking.performance_benchmark import (
+            PerformanceBenchmarkRunner,
+            auto_run_if_sources_changed,
+        )
+        from vagus.layer1.monitoring.metrics_storage import MetricsStorage
+
+        async def _run_benchmark_suite():
+            runner = PerformanceBenchmarkRunner(output_dir="benchmark_results")
+            cache = CacheService(ttl_seconds=60, max_size_mb=1)
+            storage = MetricsStorage("metrics.db")
+            result = await runner.benchmark_cache_hit_miss(cache_service=cache, iterations=3)
+            out = runner.save_results(
+                suite_name="verify_quick",
+                scenario_results=[result],
+                extra={"source": "scripts.verify"},
+            )
+            return {"result_path": str(out)}
+
+        benchmark_status = asyncio.run(
+            auto_run_if_sources_changed(
+                source_paths=["src/vagus/layer1", "src/vagus/layer2", "src/vagus/layer3"],
+                state_file=".benchmark/verify_state.json",
+                benchmark_coro=_run_benchmark_suite,
+            )
+        )
+        if benchmark_status.get("executed"):
+            print("[OK] Performance benchmark auto-run (executed)")
+        else:
+            print("[OK] Performance benchmark auto-run (skipped)")
+    except Exception as e:
+        errors.append(f"BenchmarkAutoRun: {e}")
+        print(f"[FAIL] BenchmarkAutoRun: {e}")
+
     if errors:
         print(f"\nErrors: {len(errors)}")
         return 1

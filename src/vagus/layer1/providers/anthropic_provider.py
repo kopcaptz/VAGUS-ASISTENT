@@ -41,13 +41,24 @@ class AnthropicProvider(LLMProvider):
         **kwargs,
     ):
         super().__init__(name=name, model=model, api_key=api_key, timeout=timeout, **kwargs)
+        self._client = None
         if not ANTHROPIC_AVAILABLE:
             self.logger.warning("anthropic package not installed. pip install anthropic")
 
     def _get_client(self):
         if not ANTHROPIC_AVAILABLE:
             raise RuntimeError("anthropic package not installed")
-        return AsyncAnthropic(api_key=self.api_key, timeout=self.timeout)
+        if self._client is not None:
+            return self._client
+        try:
+            self._client = AsyncAnthropic(
+                api_key=self.api_key,
+                timeout=self.timeout,
+                http_client=self.get_shared_http_client(),
+            )
+        except TypeError:
+            self._client = AsyncAnthropic(api_key=self.api_key, timeout=self.timeout)
+        return self._client
 
     async def request(
         self,

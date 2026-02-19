@@ -20,6 +20,7 @@ def create_orchestrator_with_researcher(
     *,
     dead_letter_queue: Optional[DeadLetterQueueStorage] = None,
     task_timeouts: Optional[dict[str, float]] = None,
+    cluster_config: Optional[dict[str, Any]] = None,
 ) -> TaskOrchestrator:
     """
     Создаёт TaskOrchestrator с зарегистрированным ResearcherAgent.
@@ -33,6 +34,7 @@ def create_orchestrator_with_researcher(
         dead_letter_queue=dead_letter_queue,
         task_timeouts=task_timeouts,
         skill_system=skill_system,
+        cluster_config=cluster_config,
     )
     orchestrator.register_agent(researcher)
     return orchestrator
@@ -44,6 +46,7 @@ def create_orchestrator_full(
     dead_letter_queue: Optional[DeadLetterQueueStorage] = None,
     task_timeouts: Optional[dict[str, float]] = None,
     error_analytics: Optional[Any] = None,
+    cluster_config: Optional[dict[str, Any]] = None,
 ) -> TaskOrchestrator:
     """
     Создаёт TaskOrchestrator со всеми агентами (Researcher, Coder, Analyst),
@@ -61,6 +64,7 @@ def create_orchestrator_full(
         task_timeouts=task_timeouts,
         skill_system=skill_system,
         error_analytics=error_analytics,
+        cluster_config=cluster_config,
     )
     orchestrator.register_agent(ResearcherAgent(llm_router=llm_router, skill_system=skill_system))
     orchestrator.register_agent(CoderAgent(llm_router=llm_router, skill_system=skill_system))

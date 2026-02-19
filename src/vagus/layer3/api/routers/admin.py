@@ -44,6 +44,13 @@ def _get_error_analytics_storage(request: Request):
     return storage
 
 
+def _get_memory_profiler(request: Request):
+    storage = getattr(request.app.state, "memory_profiler", None)
+    if storage is None or not hasattr(storage, "get_stats"):
+        raise HTTPException(status_code=503, detail="Memory profiler is not available")
+    return storage
+
+
 def _state_to_public(raw_state: str) -> str:
     normalized = (raw_state or "").strip().upper()
     if normalized == "OPEN":
@@ -295,3 +302,16 @@ async def get_error_analytics(
         top_sources_limit=top_sources_limit,
         metrics_context=metrics_context,
     )
+
+
+@router.get("/memory-stats")
+async def get_memory_stats(
+    request: Request,
+    refresh: bool = Query(default=True),
+    history_limit: int = Query(default=60, ge=1, le=1000),
+    current_admin: dict = Depends(get_current_admin),
+):
+    """Возвращает runtime memory profiling + leak detection отчёт."""
+    _ = current_admin
+    profiler = _get_memory_profiler(request)
+    return profiler.get_stats(refresh=refresh, history_limit=history_limit)

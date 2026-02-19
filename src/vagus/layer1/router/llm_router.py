@@ -51,6 +51,10 @@ class LLMRouter:
         default_strategy: str = "hybrid",
         cache_ttl: int = 3600,
         cache_max_mb: int = 100,
+        cache_secondary_enabled: bool = False,
+        cache_secondary_redis_url: Optional[str] = None,
+        cache_secondary_sqlite_path: str = "cache_fallback.db",
+        cache_secondary_namespace_ttls: Optional[dict[str, int]] = None,
         budget_daily: float = 10.0,
         budget_monthly: float = 200.0,
         monitoring_db: str = "metrics.db",
@@ -61,6 +65,9 @@ class LLMRouter:
         retry_max_attempts: int = 5,
         retry_backoff_factor: float = 2.0,
         retry_retryable_errors: Optional[list[str]] = None,
+        http_max_connections: int = 100,
+        http_max_keepalive_connections: int = 20,
+        http_keepalive_expiry: float = 5.0,
     ):
         self.config_manager = config_manager
         self.enable_cache = enable_cache
@@ -70,7 +77,20 @@ class LLMRouter:
         self.logger = get_logger("router")
         self._initialized = False
 
-        self.cache = CacheService(ttl_seconds=cache_ttl, max_size_mb=cache_max_mb)
+        LLMProvider.configure_http_client_pool(
+            max_connections=http_max_connections,
+            max_keepalive_connections=http_max_keepalive_connections,
+            keepalive_expiry=http_keepalive_expiry,
+        )
+
+        self.cache = CacheService(
+            ttl_seconds=cache_ttl,
+            max_size_mb=cache_max_mb,
+            enable_secondary_cache=cache_secondary_enabled,
+            secondary_redis_url=cache_secondary_redis_url,
+            secondary_sqlite_path=cache_secondary_sqlite_path,
+            secondary_namespace_ttls=cache_secondary_namespace_ttls,
+        )
         self.budgeting = BudgetingService(
             daily_limit=budget_daily,
             monthly_limit=budget_monthly,
@@ -97,7 +117,21 @@ class LLMRouter:
 
         self._providers: Dict[str, LLMProvider] = {}
         self._fallback_chain = FallbackChain(provider_ids=fallback_chain or ["openai", "anthropic", "deepseek"])
-        self._stats: Dict[str, Any] = {"providers_used": 0, "total_cost": 0.0, "requests": 0}
+        self._stats: Dict[str, Any] = {
+            "providers_used": 0,
+            "total_cost": 0.0,
+            "requests": 0,
+            "http_pool": {
+                "max_connections": http_max_connections,
+                "max_keepalive_connections": http_max_keepalive_connections,
+                "keepalive_expiry": http_keepalive_expiry,
+            },
+            "secondary_cache": {
+                "enabled": cache_secondary_enabled,
+                "redis_url": cache_secondary_redis_url,
+                "sqlite_fallback_path": cache_secondary_sqlite_path,
+            },
+        }
 
     async def initialize(self, providers_config: Optional[Dict[str, Any]] = None) -> None:
         """

@@ -166,6 +166,21 @@ secrets:
   vault_token: ""
 
 layer1:
+  http:
+    max_connections: 100
+    max_keepalive_connections: 20
+    keepalive_expiry: 5.0
+  cache:
+    ttl_seconds: 3600
+    max_size_mb: 100
+    secondary:
+      enabled: true
+      redis_url: redis://localhost:6379/0
+      sqlite_fallback_path: cache_fallback.db
+      llm_responses_ttl_seconds: 3600
+      provider_health_ttl_seconds: 120
+      rate_limit_counter_ttl_seconds: 60
+      session_data_ttl_seconds: 3600
   router:
     enable_cache: true
     enable_budgeting: true
@@ -184,6 +199,28 @@ task_timeouts:
   researcher: 300
   coder: 600
   analyst: 180
+
+layer2:
+  cluster:
+    enabled: false
+    node_id: node-local
+    stateless_agents: true
+    shared_task_queue:
+      enabled: false
+      redis_url: redis://localhost:6379/0
+      queue_name: vagus:cluster:tasks
+    distributed_locking:
+      enabled: false
+      redis_url: redis://localhost:6379/0
+      lock_ttl_seconds: 900
+
+monitoring:
+  memory_profiler:
+    enabled: true
+    interval_seconds: 30
+    history_limit: 1024
+    leak_threshold_mb: 100.0
+    leak_window_seconds: 300
 ```
 
 ### WebSocket limits и close codes
@@ -265,7 +302,31 @@ monitoring:
 - Шаблон конфигурации: `configs/alerting.yaml.example`
 - Каналы: Telegram, SMTP email, Webhook
 
-## 12. Error Handling & Resilience
+## 12. Performance setup (Stage 5)
+
+### Redis for secondary cache and cluster features
+
+```bash
+docker run -d --name vagus-redis -p 6379:6379 redis:latest
+redis-cli -h 127.0.0.1 -p 6379 ping
+```
+
+### Load testing scripts
+
+```bash
+python load_testing/api_load_test.py --users 100 --target-rps 1000
+python load_testing/websocket_load_test.py --concurrent-users 100 --duration-seconds 60
+python load_testing/cli_load_test.py --concurrent-users 100 --requests-per-user 10
+```
+
+### Memory profiling endpoint
+
+```bash
+curl -H "Authorization: Bearer <admin_token>" \
+  "http://localhost:8000/api/v1/admin/memory-stats?history_limit=60"
+```
+
+## 13. Error Handling & Resilience
 
 ### Dead Letter Queue (DLQ)
 

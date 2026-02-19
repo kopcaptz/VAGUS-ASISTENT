@@ -113,6 +113,7 @@ make docker-up
 | GET | `/api/v1/admin/circuit-breakers` | Circuit breaker dashboard data (admin only) |
 | POST | `/api/v1/admin/circuit-breakers/{provider_id}/reset` | Manual circuit breaker reset (admin only) |
 | GET | `/api/v1/admin/error-analytics` | Error classification analytics (admin only) |
+| GET | `/api/v1/admin/memory-stats` | Runtime memory profiling + leak detection (admin only) |
 | GET | `/api/v1/agents` | Список агентов |
 | GET | `/api/v1/status` | Статус системы |
 | WS | `/api/v1/tasks/ws/{id}` | WebSocket стриминг |
@@ -212,6 +213,83 @@ websocket:
 - **Error analytics**:
   - классификация: transient / permanent / infrastructure
   - error rate by type, top sources, correlation snapshot
+
+## Performance Optimizations (Stage 5)
+
+- **Shared HTTP connection pooling (Layer 1 providers)**
+  - Singleton `httpx.AsyncClient` pool для OpenAI/Anthropic/DeepSeek/OpenRouter
+  - Конфиг:
+    ```yaml
+    layer1:
+      http:
+        max_connections: 100
+        max_keepalive_connections: 20
+        keepalive_expiry: 5.0
+    ```
+- **Secondary cache: Redis + SQLite fallback**
+  - In-memory cache остаётся primary
+  - Secondary namespaces:
+    - `llm_response` (TTL 1h)
+    - `provider_health`
+    - `rate_limit_counter`
+    - `session_data`
+  - Конфиг:
+    ```yaml
+    layer1:
+      cache:
+        secondary:
+          enabled: true
+          redis_url: redis://localhost:6379/0
+          sqlite_fallback_path: cache_fallback.db
+          llm_responses_ttl_seconds: 3600
+          provider_health_ttl_seconds: 120
+          rate_limit_counter_ttl_seconds: 60
+          session_data_ttl_seconds: 3600
+    ```
+- **SQLite query optimization**
+  - Индексы `idx_metrics_timestamp`, `idx_metrics_provider`
+  - Совместимый индекс `idx_audit_log_timestamp` (если таблица `audit_log` доступна в БД)
+  - Оптимизированные выборки с `ORDER BY ... LIMIT`
+  - Периодический `VACUUM` после cleanup
+- **Memory profiler + leak detection**
+  - Endpoint: `GET /api/v1/admin/memory-stats`
+  - Мониторинг:
+    - RSS process memory
+    - Python object count / top object types
+    - GC stats
+    - leak signal при росте `>100MB` за `5 минут` (настраивается)
+- **Horizontal scalability in orchestrator**
+  - Stateless mode config
+  - Shared task queue (Redis, fallback in-memory)
+  - Distributed locking (Redis) для предотвращения двойного исполнения задач
+  - Конфиг:
+    ```yaml
+    layer2:
+      cluster:
+        enabled: false
+        node_id: node-local
+        stateless_agents: true
+        shared_task_queue:
+          enabled: false
+          redis_url: redis://localhost:6379/0
+        distributed_locking:
+          enabled: false
+          redis_url: redis://localhost:6379/0
+          lock_ttl_seconds: 900
+    ```
+- **Load testing scripts**
+  - `load_testing/api_load_test.py` (Locust сценарии)
+  - `load_testing/websocket_load_test.py` (long-running WS connections)
+  - `load_testing/cli_load_test.py` (concurrent CLI workload)
+  - JSON reports в `load_testing/reports/`
+- **Performance benchmarking**
+  - Модуль: `src/vagus/benchmarking/performance_benchmark.py`
+  - Scenarios:
+    - provider latency
+    - agent execution time
+    - cache hit/miss performance
+    - database query performance
+  - Сохранение результатов + auto-run helper при изменении исходников
 
 ## CLI
 

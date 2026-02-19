@@ -47,6 +47,39 @@ Prometheus metrics endpoint (text format):
 }
 ```
 
+### `GET /api/v1/admin/memory-stats` (admin only)
+
+Runtime memory profiler snapshot + leak detection report:
+
+Query params:
+- `refresh` (bool, default `true`) — принудительно собрать новую snapshot
+- `history_limit` (1..1000, default `60`) — сколько последних точек вернуть
+
+Response (пример):
+
+```json
+{
+  "current": {
+    "timestamp": "2026-02-19T00:00:00+00:00",
+    "process_memory_mb": 180.42,
+    "python_object_count": 45213,
+    "gc_count": {"gen0": 21, "gen1": 2, "gen2": 0},
+    "gc_stats": [],
+    "top_object_types": [{"type": "dict", "count": 10234}],
+    "leak_signal": {
+      "detected": false,
+      "growth_mb": 12.8,
+      "threshold_mb": 100.0,
+      "window_seconds": 300
+    }
+  },
+  "history": [],
+  "history_size": 1,
+  "leak_policy": {"threshold_mb": 100.0, "window_seconds": 300},
+  "monitoring_active": true
+}
+```
+
 ## WebSocket stream
 
 - Endpoint: `WS /api/v1/tasks/ws/{task_id}?token=<access_token>`
@@ -239,3 +272,42 @@ Response item fields:
   - `top_error_sources`
   - `correlation`
   - `recent_events`
+
+## Performance Optimizations (Stage 5) - config snippets
+
+```yaml
+layer1:
+  http:
+    max_connections: 100
+    max_keepalive_connections: 20
+    keepalive_expiry: 5.0
+  cache:
+    secondary:
+      enabled: true
+      redis_url: redis://localhost:6379/0
+      sqlite_fallback_path: cache_fallback.db
+      llm_responses_ttl_seconds: 3600
+      provider_health_ttl_seconds: 120
+      rate_limit_counter_ttl_seconds: 60
+      session_data_ttl_seconds: 3600
+
+layer2:
+  cluster:
+    enabled: false
+    node_id: node-local
+    stateless_agents: true
+    shared_task_queue:
+      enabled: false
+      redis_url: redis://localhost:6379/0
+    distributed_locking:
+      enabled: false
+      redis_url: redis://localhost:6379/0
+      lock_ttl_seconds: 900
+
+monitoring:
+  memory_profiler:
+    enabled: true
+    interval_seconds: 30
+    leak_threshold_mb: 100.0
+    leak_window_seconds: 300
+```

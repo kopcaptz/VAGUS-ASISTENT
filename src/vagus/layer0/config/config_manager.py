@@ -264,6 +264,23 @@ class ConfigManager:
                 "coder": 600,
                 "analyst": 180,
             },
+            "layer2": {
+                "cluster": {
+                    "enabled": False,
+                    "node_id": "node-local",
+                    "stateless_agents": True,
+                    "shared_task_queue": {
+                        "enabled": False,
+                        "redis_url": "redis://localhost:6379/0",
+                        "queue_name": "vagus:cluster:tasks",
+                    },
+                    "distributed_locking": {
+                        "enabled": False,
+                        "redis_url": "redis://localhost:6379/0",
+                        "lock_ttl_seconds": 900,
+                    },
+                }
+            },
             "secrets": {
                 "backend": "local",
                 "vault_addr": "http://localhost:8200",
@@ -284,6 +301,43 @@ class ConfigManager:
                     "enabled": True,
                     "models": ["claude-3-opus", "claude-3-sonnet"]
                 }
+            },
+            "layer1": {
+                "http": {
+                    "max_connections": 100,
+                    "max_keepalive_connections": 20,
+                    "keepalive_expiry": 5.0,
+                },
+                "cache": {
+                    "ttl_seconds": 3600,
+                    "max_size_mb": 100,
+                    "secondary": {
+                        "enabled": True,
+                        "redis_url": "redis://localhost:6379/0",
+                        "sqlite_fallback_path": "cache_fallback.db",
+                        "llm_responses_ttl_seconds": 3600,
+                        "provider_health_ttl_seconds": 120,
+                        "rate_limit_counter_ttl_seconds": 60,
+                        "session_data_ttl_seconds": 3600,
+                    },
+                },
+            },
+            "monitoring": {
+                "memory_profiler": {
+                    "enabled": True,
+                    "interval_seconds": 30,
+                    "history_limit": 1024,
+                    "leak_threshold_mb": 100.0,
+                    "leak_window_seconds": 300,
+                },
+                "health": {
+                    "thresholds": {
+                        "disk_free_percent_min": 10.0,
+                        "memory_usage_percent_max": 90.0,
+                        "check_timeout_seconds": 2.0,
+                        "disk_path": ".",
+                    },
+                },
             },
             "agents": {
                 "coordinator": {

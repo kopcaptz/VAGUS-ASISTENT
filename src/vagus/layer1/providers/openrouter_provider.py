@@ -31,17 +31,29 @@ class OpenRouterProvider(LLMProvider):
         **kwargs,
     ):
         super().__init__(name=name, model=model, api_key=api_key, timeout=timeout, **kwargs)
+        self._client = None
         if not OPENROUTER_AVAILABLE:
             self.logger.warning("openai package required for OpenRouter")
 
     def _get_client(self):
         if not OPENROUTER_AVAILABLE:
             raise RuntimeError("openai package not installed")
-        return AsyncOpenAI(
-            api_key=self.api_key,
-            base_url=self.BASE_URL,
-            timeout=self.timeout,
-        )
+        if self._client is not None:
+            return self._client
+        try:
+            self._client = AsyncOpenAI(
+                api_key=self.api_key,
+                base_url=self.BASE_URL,
+                timeout=self.timeout,
+                http_client=self.get_shared_http_client(),
+            )
+        except TypeError:
+            self._client = AsyncOpenAI(
+                api_key=self.api_key,
+                base_url=self.BASE_URL,
+                timeout=self.timeout,
+            )
+        return self._client
 
     async def request(
         self,

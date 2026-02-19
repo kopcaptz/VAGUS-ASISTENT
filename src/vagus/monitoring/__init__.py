@@ -13,6 +13,7 @@ from .error_analytics import (
     ErrorAnalyticsStorage,
     classify_error,
 )
+from .memory_profiler import MemoryLeakPolicy, MemoryProfiler
 
 __all__ = [
     "AlertEvent",
@@ -24,4 +25,6 @@ __all__ = [
     "load_alerting_config_from_yaml",
     "ErrorAnalyticsStorage",
     "classify_error",
+    "MemoryLeakPolicy",
+    "MemoryProfiler",
 ]

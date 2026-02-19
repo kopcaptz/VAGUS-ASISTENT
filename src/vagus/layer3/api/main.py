@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from vagus.layer0.logging import get_logger
+from vagus.monitoring.memory_profiler import MemoryLeakPolicy, MemoryProfiler
 from vagus.logging import StructuredLoggingMiddleware, configure_structured_logging
 
 from .audit.audit_trail import AuditTrail
@@ -61,6 +62,7 @@ def _create_orchestrator_with_config(
     *,
     dead_letter_queue=None,
     error_analytics=None,
+    cluster_settings: Optional[dict[str, Any]] = None,
 ):
     """Создаёт полный стек Layer 1 + Layer 2 с runtime-конфигурацией."""
     from vagus.layer1 import LLMRouter
@@ -74,6 +76,7 @@ def _create_orchestrator_with_config(
         dead_letter_queue=dead_letter_queue,
         task_timeouts=_load_task_timeout_settings(runtime_config),
         error_analytics=error_analytics,
+        cluster_config=cluster_settings,
     )
     return llm_router, orchestrator
 
@@ -216,10 +219,57 @@ def _load_secrets_settings(config_data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _load_memory_profiler_settings(config_data: dict[str, Any]) -> dict[str, Any]:
+    monitoring_cfg = config_data.get("monitoring", {}) if isinstance(config_data, dict) else {}
+    if not isinstance(monitoring_cfg, dict):
+        monitoring_cfg = {}
+    memory_cfg = monitoring_cfg.get("memory_profiler", {})
+    if not isinstance(memory_cfg, dict):
+        memory_cfg = {}
+    return {
+        "enabled": _safe_bool(memory_cfg.get("enabled"), True),
+        "interval_seconds": _safe_int(memory_cfg.get("interval_seconds"), 30),
+        "history_limit": _safe_int(memory_cfg.get("history_limit"), 1024),
+        "leak_threshold_mb": float(memory_cfg.get("leak_threshold_mb", 100.0) or 100.0),
+        "leak_window_seconds": _safe_int(memory_cfg.get("leak_window_seconds"), 300),
+    }
+
+
+def _load_cluster_settings(config_data: dict[str, Any]) -> dict[str, Any]:
+    layer2_cfg = config_data.get("layer2", {}) if isinstance(config_data, dict) else {}
+    if not isinstance(layer2_cfg, dict):
+        layer2_cfg = {}
+    cluster_cfg = layer2_cfg.get("cluster", {})
+    if not isinstance(cluster_cfg, dict):
+        cluster_cfg = {}
+    queue_cfg = cluster_cfg.get("shared_task_queue", {})
+    if not isinstance(queue_cfg, dict):
+        queue_cfg = {}
+    lock_cfg = cluster_cfg.get("distributed_locking", {})
+    if not isinstance(lock_cfg, dict):
+        lock_cfg = {}
+    return {
+        "enabled": _safe_bool(cluster_cfg.get("enabled"), False),
+        "node_id": str(cluster_cfg.get("node_id", "node-local")),
+        "stateless_agents": _safe_bool(cluster_cfg.get("stateless_agents"), True),
+        "shared_task_queue": {
+            "enabled": _safe_bool(queue_cfg.get("enabled"), False),
+            "redis_url": queue_cfg.get("redis_url"),
+            "queue_name": queue_cfg.get("queue_name", "vagus:cluster:tasks"),
+        },
+        "distributed_locking": {
+            "enabled": _safe_bool(lock_cfg.get("enabled"), False),
+            "redis_url": lock_cfg.get("redis_url"),
+            "lock_ttl_seconds": _safe_int(lock_cfg.get("lock_ttl_seconds"), 900),
+        },
+    }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Жизненный цикл приложения: инициализация и завершение."""
     from vagus.layer2.dead_letter_queue import DeadLetterQueueStorage
+    from vagus.layer1.providers.base import LLMProvider
     from vagus.monitoring.error_analytics import ErrorAnalyticsStorage
 
     runtime_config = getattr(app.state, "runtime_config", {})
@@ -235,6 +285,7 @@ async def lifespan(app: FastAPI):
         runtime_config,
         dead_letter_queue=dead_letter_queue,
         error_analytics=error_analytics,
+        cluster_settings=getattr(app.state, "cluster_settings", {}),
     )
     await llm_router.initialize()
 
@@ -247,6 +298,20 @@ async def lifespan(app: FastAPI):
     audit_db_path = security_settings.get("audit_db_path", "audit_trail.db")
     app.state.audit_trail = AuditTrail(db_path=str(audit_db_path))
     app.state.websocket_audit_storage = WebSocketAuditStorage()
+    memory_settings = getattr(app.state, "memory_profiler_settings", {})
+    if not isinstance(memory_settings, dict):
+        memory_settings = {}
+    app.state.memory_profiler = MemoryProfiler(
+        leak_policy=MemoryLeakPolicy(
+            threshold_mb=float(memory_settings.get("leak_threshold_mb", 100.0)),
+            window_seconds=int(memory_settings.get("leak_window_seconds", 300)),
+        ),
+        history_limit=int(memory_settings.get("history_limit", 1024)),
+    )
+    if bool(memory_settings.get("enabled", True)):
+        await app.state.memory_profiler.start(
+            interval_seconds=int(memory_settings.get("interval_seconds", 30))
+        )
     app.state.audit_trail.log_action(
         user_id="system",
         action="config.loaded",
@@ -265,6 +330,21 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    try:
+        if hasattr(app.state, "memory_profiler"):
+            await app.state.memory_profiler.stop()
+    except Exception as exc:
+        logger.warning("Failed to stop memory profiler: %s", exc)
+    try:
+        if hasattr(llm_router, "cache") and hasattr(llm_router.cache, "close"):
+            await llm_router.cache.close()
+    except Exception as exc:
+        logger.warning("Failed to close cache backends: %s", exc)
+    try:
+        await LLMProvider.close_shared_http_client()
+    except Exception as exc:
+        logger.warning("Failed to close shared provider HTTP pool: %s", exc)
+
 
 def create_app() -> FastAPI:
     """Фабрика приложения FastAPI."""
@@ -275,6 +355,8 @@ def create_app() -> FastAPI:
     security_settings = _load_security_settings(runtime_config)
     jwt_settings = _load_jwt_settings(runtime_config)
     secrets_settings = _load_secrets_settings(runtime_config)
+    memory_profiler_settings = _load_memory_profiler_settings(runtime_config)
+    cluster_settings = _load_cluster_settings(runtime_config)
     health_thresholds = load_health_thresholds(runtime_config)
     configure_jwt_secret_rotation(
         secret_rotation_days=jwt_settings["secret_rotation_days"],
@@ -337,6 +419,8 @@ def create_app() -> FastAPI:
     app.state.security_settings = security_settings
     app.state.jwt_settings = jwt_settings
     app.state.secrets_settings = secrets_settings
+    app.state.memory_profiler_settings = memory_profiler_settings
+    app.state.cluster_settings = cluster_settings
     app.state.health_thresholds = health_thresholds
     app.state.runtime_config = runtime_config
 
