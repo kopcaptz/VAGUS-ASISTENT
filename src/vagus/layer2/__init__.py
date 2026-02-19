@@ -6,6 +6,7 @@ from typing import Any
 
 from .communication import CommunicationLayer
 from .agents.base_agent import BaseAgent
+from .agents.coder import CoderAgent
 from .agents.researcher import ResearcherAgent
 from .orchestrator import TaskOrchestrator
 from .skills import SkillSystem
@@ -27,6 +28,7 @@ def create_orchestrator_with_researcher(llm_router: Any) -> TaskOrchestrator:
 __all__ = [
     "CommunicationLayer",
     "BaseAgent",
+    "CoderAgent",
     "ResearcherAgent",
     "TaskOrchestrator",
     "SkillSystem",
