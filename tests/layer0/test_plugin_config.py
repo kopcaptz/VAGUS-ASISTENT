@@ -22,6 +22,9 @@ def test_app_config_plugins_defaults():
     assert "api.openai.com" in config.plugins.sandbox.network_whitelist
     assert config.plugins.security.max_plugin_dependencies == 10
     assert "os.system" in config.plugins.security.banned_imports
+    assert config.plugins.hot_reload.enabled is True
+    assert config.plugins.hot_reload.debounce_ms == 500
+    assert "./plugins" in config.plugins.hot_reload.watch_directories
     assert config.plugins.marketplace.url == "https://plugins.vagus.ai"
 
 
@@ -44,3 +47,4 @@ def test_example_yaml_has_plugin_section():
     assert payload["plugins"]["sandbox"]["timeout_seconds"] == 30
     assert payload["plugins"]["sandbox"]["filesystem_whitelist"] == ["/tmp", "./data"]
     assert payload["plugins"]["security"]["max_plugin_dependencies"] == 10
+    assert payload["plugins"]["hot_reload"]["debounce_ms"] == 500

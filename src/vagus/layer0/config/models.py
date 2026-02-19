@@ -292,6 +292,23 @@ class PluginsSecurityConfig(BaseModel):
         return [str(item).strip() for item in v if str(item).strip()]
 
 
+class PluginsHotReloadConfig(BaseModel):
+    """Настройки hot-reload плагинов."""
+
+    enabled: bool = Field(default=True)
+    watch_directories: List[str] = Field(
+        default_factory=lambda: ["./plugins", "~/.vagus/plugins"]
+    )
+    debounce_ms: int = Field(default=500, ge=50, le=60000)
+
+    @validator("watch_directories")
+    def validate_watch_directories(cls, v):
+        normalized = [str(item).strip() for item in v if str(item).strip()]
+        if not normalized:
+            raise ValueError("plugins.hot_reload.watch_directories must not be empty")
+        return normalized
+
+
 class PluginsConfig(BaseModel):
     """Конфигурация плагинной системы."""
 
@@ -302,6 +319,7 @@ class PluginsConfig(BaseModel):
     )
     sandbox: PluginsSandboxConfig = Field(default_factory=PluginsSandboxConfig)
     security: PluginsSecurityConfig = Field(default_factory=PluginsSecurityConfig)
+    hot_reload: PluginsHotReloadConfig = Field(default_factory=PluginsHotReloadConfig)
     marketplace: PluginsMarketplaceConfig = Field(default_factory=PluginsMarketplaceConfig)
 
     @validator("scan_directories")

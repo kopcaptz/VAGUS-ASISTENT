@@ -27,6 +27,7 @@ def create_app():
     from .commands.task import app as task_app
     from .commands.agent import app as agent_app
     from .commands.admin import app as admin_app
+    from .commands.plugin import app as plugin_app
 
     if task_app is not None:
         app.add_typer(task_app, name="task", help="Управление задачами")
@@ -34,6 +35,8 @@ def create_app():
         app.add_typer(agent_app, name="agent", help="Информация об агентах")
     if admin_app is not None:
         app.add_typer(admin_app, name="admin", help="Администрирование")
+    if plugin_app is not None:
+        app.add_typer(plugin_app, name="plugin", help="Управление плагинами")
 
     @app.command()
     def login(
