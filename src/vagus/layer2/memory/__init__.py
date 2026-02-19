@@ -4,5 +4,6 @@
 """
 
 from .episodic import EpisodicMemory
+from .semantic import SemanticMemory, sync_episodic_to_semantic
 
-__all__: list[str] = ["EpisodicMemory"]
+__all__: list[str] = ["EpisodicMemory", "SemanticMemory", "sync_episodic_to_semantic"]

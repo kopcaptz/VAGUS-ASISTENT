@@ -9,7 +9,7 @@ from .agents.base_agent import BaseAgent
 from .agents.analyst import AnalystAgent
 from .agents.coder import CoderAgent
 from .agents.researcher import ResearcherAgent
-from .memory import EpisodicMemory
+from .memory import EpisodicMemory, SemanticMemory
 from .orchestrator import TaskOrchestrator
 from .skills import SkillSystem
 
@@ -29,13 +29,18 @@ def create_orchestrator_with_researcher(llm_router: Any) -> TaskOrchestrator:
 
 def create_orchestrator_full(llm_router: Any) -> TaskOrchestrator:
     """
-    Создаёт TaskOrchestrator со всеми агентами (Researcher, Coder, Analyst)
-    и EpisodicMemory. Для многошаговых задач и E2E.
+    Создаёт TaskOrchestrator со всеми агентами (Researcher, Coder, Analyst),
+    EpisodicMemory и SemanticMemory для векторного поиска похожих задач.
     """
     communication = CommunicationLayer()
     memory = EpisodicMemory()
+    semantic_memory = SemanticMemory()
     skill_system = SkillSystem()
-    orchestrator = TaskOrchestrator(communication=communication, memory=memory)
+    orchestrator = TaskOrchestrator(
+        communication=communication,
+        memory=memory,
+        semantic_memory=semantic_memory,
+    )
     orchestrator.register_agent(ResearcherAgent(llm_router=llm_router, skill_system=skill_system))
     orchestrator.register_agent(CoderAgent(llm_router=llm_router, skill_system=skill_system))
     orchestrator.register_agent(AnalystAgent(llm_router=llm_router))
@@ -49,6 +54,7 @@ __all__ = [
     "CoderAgent",
     "EpisodicMemory",
     "ResearcherAgent",
+    "SemanticMemory",
     "TaskOrchestrator",
     "SkillSystem",
     "create_orchestrator_full",

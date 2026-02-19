@@ -12,6 +12,7 @@ from ..layer0.logging import get_logger
 
 if TYPE_CHECKING:
     from .memory.episodic import EpisodicMemory
+    from .memory.semantic import SemanticMemory
 
 
 class TaskStatus(str, Enum):
@@ -33,16 +34,19 @@ class TaskOrchestrator:
         communication: CommunicationLayer,
         agents: Optional[List[BaseAgent]] = None,
         memory: Optional["EpisodicMemory"] = None,
+        semantic_memory: Optional["SemanticMemory"] = None,
     ):
         """
         Args:
             communication: Слой коммуникации
             agents: Список агентов (Researcher, Coder, ...)
             memory: EpisodicMemory для записи истории выполнения (опционально)
+            semantic_memory: SemanticMemory для векторного поиска похожих задач (опционально)
         """
         self.communication = communication
         self.agents = agents or []
         self.memory = memory
+        self.semantic_memory = semantic_memory
         self.logger = get_logger("layer2.orchestrator")
 
     def register_agent(self, agent: BaseAgent) -> None:
@@ -54,13 +58,26 @@ class TaskOrchestrator:
         """
         Выполняет задачу. Скелет — выбор агента и вызов process().
         Записывает шаги в EpisodicMemory при наличии.
+        При наличии SemanticMemory: ищет похожие задачи и добавляет контекст.
         """
         self.logger.info(f"Task {task_id}: {task_type} — PENDING")
         agent = self._select_agent(task_type)
         if not agent:
             return {"error": f"No agent for task_type={task_type}"}
 
-        task = {"task_id": task_id, "prompt": prompt, "task_type": task_type}
+        # Поиск похожих задач и извлечение контекста
+        context_prefix = ""
+        if self.semantic_memory:
+            context_prefix = self.semantic_memory.get_context(prompt, top_k=2)
+            if context_prefix:
+                context_prefix = (
+                    "Релевантный контекст из похожих выполненных задач:\n"
+                    f"{context_prefix}\n\n---\nИсходный запрос: "
+                )
+
+        enhanced_prompt = f"{context_prefix}{prompt}" if context_prefix else prompt
+        task = {"task_id": task_id, "prompt": enhanced_prompt, "task_type": task_type}
+
         try:
             result = await agent.process(task)
             if self.memory:
@@ -70,6 +87,13 @@ class TaskOrchestrator:
                     "process",
                     result,
                     metadata={"task_type": task_type, "prompt": prompt[:100]},
+                )
+            # Синхронизация в SemanticMemory для будущего поиска похожих
+            if self.semantic_memory and self.memory:
+                from .memory.semantic import sync_episodic_to_semantic
+                sync_episodic_to_semantic(
+                    self.memory, self.semantic_memory,
+                    task_id=task_id, prompt=prompt, task_type=task_type,
                 )
             await self.communication.publish_result(task_id, result)
             self.logger.info(f"Task {task_id}: COMPLETED")

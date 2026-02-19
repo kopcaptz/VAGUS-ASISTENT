@@ -153,3 +153,34 @@ async def test_e2e_analyst_dataset_analysis(full_orchestrator):
     history = memory.get_history("e2e-analyst-1")
     assert len(history) == 1
     assert history[0]["agent_type"] == "analyst"
+
+
+@pytest.mark.asyncio
+async def test_e2e_semantic_similar_context(full_orchestrator):
+    """
+    E2E: SemanticMemory — похожая задача получает контекст из прошлых.
+    create_orchestrator_full включает SemanticMemory.
+    """
+    orchestrator, memory = full_orchestrator
+    semantic = orchestrator.semantic_memory
+    assert semantic is not None
+
+    # Первая задача: сложение
+    await orchestrator.execute_task(
+        task_id="e2e-semantic-1",
+        prompt="Напиши функцию сложения двух чисел",
+        task_type="code",
+    )
+
+    # Похожая задача найдена в SemanticMemory
+    similar = semantic.search_similar("функция сложения чисел", top_k=1)
+    assert len(similar) >= 1
+    assert similar[0]["task_id"] == "e2e-semantic-1"
+
+    # Вторая похожая задача — промпт будет дополнен контекстом из первой
+    result = await orchestrator.execute_task(
+        task_id="e2e-semantic-2",
+        prompt="Напиши функцию умножения двух чисел",
+        task_type="code",
+    )
+    assert result.get("success") is True
