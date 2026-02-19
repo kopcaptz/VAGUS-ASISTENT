@@ -1,0 +1,38 @@
+{
+  "name": "secure_plugin",
+  "version": "1.0.0",
+  "author": "Vagus Team",
+  "description": "Example plugin with explicit runtime permissions",
+  "dependencies": [],
+  "python_version": ">=3.10",
+  "vagus_version": ">=0.1.0",
+  "entry_point": "plugin:SecurePlugin",
+  "hooks": [
+    {
+      "name": "pre_task_execution",
+      "priority": 60,
+      "callback": "SecurePlugin.pre_task_execution",
+      "is_async": false
+    }
+  ],
+  "permissions": [
+    "tasks:read"
+  ],
+  "runtime_permissions": {
+    "level": "READ",
+    "filesystem": {
+      "read": [
+        "./data"
+      ],
+      "write": []
+    },
+    "network": [],
+    "environment_variables": [
+      "PLUGIN_MODE"
+    ],
+    "max_memory_mb": 256,
+    "max_execution_time_seconds": 10
+  },
+  "signature_key_id": "secure_plugin",
+  "signature_algorithm": "ed25519"
+}

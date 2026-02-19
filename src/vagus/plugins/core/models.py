@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import inspect
+import os
 import re
+from pathlib import Path
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Optional, Union
@@ -31,6 +33,113 @@ class PluginLifecycleState(str, Enum):
     ENABLED = "ENABLED"
     DISABLED = "DISABLED"
     ERROR = "ERROR"
+
+
+class PermissionLevel(str, Enum):
+    """Permission level for runtime plugin operations."""
+
+    NONE = "NONE"
+    READ = "READ"
+    WRITE = "WRITE"
+    NETWORK = "NETWORK"
+    SYSTEM = "SYSTEM"
+
+
+class FilesystemPermissions(BaseModel):
+    """Filesystem access policy for plugin."""
+
+    read: list[str] = Field(default_factory=list)
+    write: list[str] = Field(default_factory=list)
+
+    @field_validator("read", "write")
+    @classmethod
+    def normalize_paths(cls, paths: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for path in paths or []:
+            text = str(path).strip()
+            if not text:
+                continue
+            normalized.append(os.path.normpath(os.path.expanduser(text)))
+        return normalized
+
+
+class PluginPermissions(BaseModel):
+    """Runtime security limits and allow-lists for plugin sandbox."""
+
+    level: PermissionLevel = PermissionLevel.NONE
+    filesystem: FilesystemPermissions = Field(default_factory=FilesystemPermissions)
+    network: list[str] = Field(default_factory=list)
+    environment_variables: list[str] = Field(default_factory=list)
+    max_memory_mb: int = Field(default=512, ge=16, le=16384)
+    max_execution_time_seconds: int = Field(default=30, ge=1, le=3600)
+
+    @field_validator("filesystem", mode="before")
+    @classmethod
+    def normalize_filesystem_input(cls, value: Any) -> Any:
+        if value is None:
+            return FilesystemPermissions()
+        if isinstance(value, list):
+            return {"read": value, "write": []}
+        return value
+
+    @field_validator("network", "environment_variables")
+    @classmethod
+    def normalize_string_lists(cls, values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for value in values or []:
+            text = str(value).strip()
+            if text:
+                normalized.append(text)
+        return normalized
+
+    def can_read_path(self, path: str | Path) -> bool:
+        if self.level == PermissionLevel.SYSTEM:
+            return True
+        if self.level not in {PermissionLevel.READ, PermissionLevel.WRITE, PermissionLevel.NETWORK}:
+            return False
+        return self._is_path_allowed(path, self.filesystem.read + self.filesystem.write)
+
+    def can_write_path(self, path: str | Path) -> bool:
+        if self.level == PermissionLevel.SYSTEM:
+            return True
+        if self.level not in {PermissionLevel.WRITE, PermissionLevel.NETWORK}:
+            return False
+        return self._is_path_allowed(path, self.filesystem.write)
+
+    def can_access_domain(self, domain: str) -> bool:
+        if self.level == PermissionLevel.SYSTEM:
+            return True
+        if self.level != PermissionLevel.NETWORK:
+            return False
+        host = (domain or "").strip().lower()
+        if not host:
+            return False
+        for allowed_domain in self.network:
+            allowed = allowed_domain.lower()
+            if host == allowed or host.endswith(f".{allowed}"):
+                return True
+        return False
+
+    def can_access_env_var(self, env_var_name: str) -> bool:
+        if self.level == PermissionLevel.SYSTEM:
+            return True
+        if self.level == PermissionLevel.NONE:
+            return False
+        return env_var_name in self.environment_variables
+
+    @staticmethod
+    def _is_path_allowed(candidate_path: str | Path, allowed_paths: list[str]) -> bool:
+        if not allowed_paths:
+            return False
+
+        candidate = Path(candidate_path).expanduser().resolve()
+        for allowed_raw in allowed_paths:
+            allowed = Path(allowed_raw).expanduser().resolve()
+            if candidate == allowed:
+                return True
+            if candidate.is_relative_to(allowed):
+                return True
+        return False
 
 
 class HookDefinition(BaseModel):
@@ -85,6 +194,9 @@ class PluginManifest(BaseModel):
     entry_point: str
     hooks: list[HookDefinition] = Field(default_factory=list)
     permissions: list[str] = Field(default_factory=list)
+    runtime_permissions: PluginPermissions = Field(default_factory=PluginPermissions)
+    signature_key_id: Optional[str] = None
+    signature_algorithm: Optional[str] = None
 
     @field_validator("name")
     @classmethod
@@ -136,6 +248,20 @@ class PluginManifest(BaseModel):
                 raise ValueError(f"Invalid version specifier: {spec}") from exc
 
         return spec
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_permissions_payload(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        permissions_value = data.get("permissions")
+        if isinstance(permissions_value, dict) and "runtime_permissions" not in data:
+            data = dict(data)
+            data["runtime_permissions"] = permissions_value
+            data["permissions"] = []
+
+        return data
 
 
 class PluginState(BaseModel):

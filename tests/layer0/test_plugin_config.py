@@ -18,6 +18,10 @@ def test_app_config_plugins_defaults():
     assert config.plugins.auto_discover is True
     assert "./plugins" in config.plugins.scan_directories
     assert config.plugins.sandbox.memory_limit_mb == 512
+    assert "/tmp" in config.plugins.sandbox.filesystem_whitelist
+    assert "api.openai.com" in config.plugins.sandbox.network_whitelist
+    assert config.plugins.security.max_plugin_dependencies == 10
+    assert "os.system" in config.plugins.security.banned_imports
     assert config.plugins.marketplace.url == "https://plugins.vagus.ai"
 
 
@@ -38,3 +42,5 @@ def test_example_yaml_has_plugin_section():
     assert isinstance(payload, dict)
     assert "plugins" in payload
     assert payload["plugins"]["sandbox"]["timeout_seconds"] == 30
+    assert payload["plugins"]["sandbox"]["filesystem_whitelist"] == ["/tmp", "./data"]
+    assert payload["plugins"]["security"]["max_plugin_dependencies"] == 10

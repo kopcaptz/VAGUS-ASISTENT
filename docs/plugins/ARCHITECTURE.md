@@ -19,6 +19,8 @@ src/vagus/plugins/
 ├── loader/         # Local/Git/PyPI plugin loaders
 ├── sandbox/        # Sandboxed execution abstraction
 ├── hooks/          # Hook registration and execution system
+├── security/       # Signature verification and trust store
+├── monitoring/     # Runtime health and anomaly monitoring
 └── marketplace/    # Marketplace integration primitives
 ```
 
@@ -74,6 +76,14 @@ Callbacks with higher priority run first.
 `SandboxExecutor` currently enforces timeout-based execution boundaries and provides
 an extension point for stronger OS-level isolation (process/container isolation,
 memory cgroups, seccomp profiles) in subsequent iterations.
+
+## Security Hardening (1.2)
+
+- `SandboxEngine` adds memory/time limits + filesystem/network/process guards.
+- `SecurityManager` enforces permissions and keeps audit events.
+- `SecurePluginLoader` performs static code checks, dependency vetting, and quarantine.
+- `PluginSignatureVerifier` verifies Ed25519 manifest signatures and GPG marketplace artifacts.
+- `PluginMonitor` tracks execution quality/security violations and auto-disables risky plugins.
 
 ## Hot Reload
 

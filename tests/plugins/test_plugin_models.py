@@ -7,8 +7,10 @@ from pydantic import ValidationError
 
 from vagus.plugins.core.models import (
     HookDefinition,
+    PermissionLevel,
     PluginLifecycleState,
     PluginManifest,
+    PluginPermissions,
     PluginState,
 )
 
@@ -71,3 +73,36 @@ def test_plugin_state_defaults():
     assert state.state == PluginLifecycleState.DISABLED
     assert state.load_time is None
     assert state.error_message is None
+
+
+def test_plugin_manifest_accepts_structured_runtime_permissions():
+    payload = _manifest_payload()
+    payload["runtime_permissions"] = {
+        "level": "READ",
+        "filesystem": {"read": ["/tmp"], "write": []},
+        "network": [],
+        "environment_variables": ["PLUGIN_TOKEN"],
+        "max_memory_mb": 256,
+        "max_execution_time_seconds": 10,
+    }
+
+    manifest = PluginManifest(**payload)
+    assert manifest.runtime_permissions.level == PermissionLevel.READ
+    assert "/tmp" in manifest.runtime_permissions.filesystem.read
+
+
+def test_plugin_manifest_supports_permissions_dict_backward_compat():
+    payload = _manifest_payload()
+    payload["permissions"] = {
+        "level": "WRITE",
+        "filesystem": {"read": ["/tmp"], "write": ["/tmp"]},
+        "network": [],
+        "environment_variables": [],
+        "max_memory_mb": 128,
+        "max_execution_time_seconds": 10,
+    }
+
+    manifest = PluginManifest(**payload)
+    assert isinstance(manifest.runtime_permissions, PluginPermissions)
+    assert manifest.runtime_permissions.level == PermissionLevel.WRITE
+    assert manifest.permissions == []
