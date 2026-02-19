@@ -75,6 +75,19 @@ class EpisodicMemory:
         if task_id in self._storage:
             del self._storage[task_id]
 
+    def add_steps_batch(
+        self,
+        steps: List[tuple[str, str, str, Any, Optional[Dict[str, Any]]]],
+    ) -> List[str]:
+        """
+        Batch: добавляет несколько шагов за один вызов.
+        Каждый элемент: (task_id, agent_type, action, result, metadata).
+        """
+        step_ids = []
+        for task_id, agent_type, action, result, metadata in steps:
+            step_ids.append(self.add_step(task_id, agent_type, action, result, metadata))
+        return step_ids
+
     def get_all_tasks(self) -> List[str]:
         """Возвращает список всех task_id с непустой историей."""
         return list(self._storage.keys())

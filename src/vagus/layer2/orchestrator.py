@@ -3,6 +3,7 @@ Task Orchestrator — мозг системы.
 State Machine: PENDING -> IN_PROGRESS -> COMPLETED
 """
 
+import asyncio
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -200,6 +201,65 @@ class TaskOrchestrator:
             "steps_results": steps_results,
             "step_count": len(steps_results),
             "context": context,
+        }
+
+    async def execute_parallel_tasks(
+        self,
+        task_ids: List[str],
+        prompts: List[str],
+        task_types: Optional[List[str]] = None,
+        max_concurrency: int = 5,
+    ) -> Dict[str, Any]:
+        """
+        Параллельное выполнение независимых задач.
+        Использует asyncio.gather() с ограничением через Semaphore.
+
+        Args:
+            task_ids: Список идентификаторов задач
+            prompts: Список промптов (должен совпадать по длине с task_ids)
+            task_types: Список типов задач (по умолчанию "default" для всех)
+            max_concurrency: Максимум одновременных задач (semaphore)
+
+        Returns:
+            Dict с results (по task_id), errors, completed_count
+        """
+        if len(task_ids) != len(prompts):
+            return {
+                "error": "task_ids and prompts length mismatch",
+                "results": {},
+                "errors": {},
+                "completed_count": 0,
+            }
+        task_types = task_types or ["default"] * len(task_ids)
+        if len(task_types) != len(task_ids):
+            task_types = task_types + ["default"] * (len(task_ids) - len(task_types))
+
+        semaphore = asyncio.Semaphore(max_concurrency)
+
+        async def _run_one(tid: str, prompt: str, ttype: str) -> Dict[str, Any]:
+            async with semaphore:
+                return await self.execute_task(tid, prompt, ttype)
+
+        self.logger.info(f"Parallel execution: {len(task_ids)} tasks, max_concurrency={max_concurrency}")
+        coros = [_run_one(tid, p, t) for tid, p, t in zip(task_ids, prompts, task_types)]
+        raw_results = await asyncio.gather(*coros, return_exceptions=True)
+
+        results: Dict[str, Any] = {}
+        errors: Dict[str, str] = {}
+        for task_id, raw in zip(task_ids, raw_results):
+            if isinstance(raw, Exception):
+                errors[task_id] = str(raw)
+                results[task_id] = {"error": str(raw)}
+            else:
+                results[task_id] = raw
+                if "error" in raw and raw.get("error"):
+                    errors[task_id] = str(raw["error"])
+
+        return {
+            "results": results,
+            "errors": errors,
+            "completed_count": len(task_ids) - len(errors),
+            "total_count": len(task_ids),
         }
 
     def _select_agent(self, task_type: str) -> Optional[BaseAgent]:

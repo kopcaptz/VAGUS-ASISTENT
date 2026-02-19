@@ -68,6 +68,7 @@ class SemanticMemory:
         self._embedder = embedder or _default_embed
         self._collection_name = collection_name
         self._storage: Dict[str, Dict[str, Any]] = {}
+        self._embedding_cache: Dict[str, List[float]] = {}
         self.logger = get_logger("layer2.memory.semantic")
 
     def add_embedding(
@@ -118,7 +119,12 @@ class SemanticMemory:
         if not self._storage:
             return []
 
-        query_vec = self._embedder([query])[0]
+        cache_key = f"q:{hashlib.md5(query.encode()).hexdigest()}"
+        if cache_key in self._embedding_cache:
+            query_vec = self._embedding_cache[cache_key]
+        else:
+            query_vec = self._embedder([query])[0]
+            self._embedding_cache[cache_key] = query_vec
         scored: List[tuple[float, Dict[str, Any]]] = []
 
         for emb_id, record in self._storage.items():
