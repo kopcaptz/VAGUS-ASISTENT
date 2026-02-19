@@ -80,3 +80,19 @@ async def test_auto_run_if_sources_changed(tmp_path):
         benchmark_coro=_benchmark,
     )
     assert second["executed"] is False
+
+
+def test_compare_results_reports_delta():
+    current = {
+        "scenarios": [
+            {"name": "provider_latency", "avg_ms": 120.0},
+        ]
+    }
+    baseline = {
+        "scenarios": [
+            {"name": "provider_latency", "avg_ms": 100.0},
+        ]
+    }
+    comparison = PerformanceBenchmarkRunner.compare_results(current, baseline)
+    assert comparison["provider_latency"]["delta_ms"] == 20.0
+    assert comparison["provider_latency"]["regression"] is True
