@@ -116,5 +116,15 @@ class WebSocketAuditLogEntry(BaseModel):
     duration_seconds: Optional[float] = None
 
 
+class AuditTrailLogEntry(BaseModel):
+    id: int
+    timestamp: datetime
+    user_id: Optional[str] = None
+    action: str
+    resource: str
+    details: Any
+    ip_address: Optional[str] = None
+
+
 class ErrorResponse(BaseModel):
     detail: str

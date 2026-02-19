@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from pydantic import ValidationError
 
 from .models import AppConfig
+from .secrets_manager import SecretsManager
 
 # Импорты для hot-reload (опционально)
 try:
@@ -94,23 +95,21 @@ class ConfigManager:
         return data or {}
     
     def _inject_secrets(self, config_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Внедряет секреты из переменных окружения в конфигурацию."""
+        """Внедряет секреты в конфигурацию через SecretsManager."""
         if 'providers' not in config_data:
             return config_data
-        
-        import os
-        from pydantic import SecretStr
-        
+
+        secrets_cfg = config_data.get("secrets", {}) if isinstance(config_data, dict) else {}
+        secrets_manager = SecretsManager.from_config(secrets_cfg if isinstance(secrets_cfg, dict) else {})
+
         for provider_name, provider_config in config_data['providers'].items():
-            # Получаем API ключ из переменных окружения
-            secret_key = f"{provider_name.upper()}_API_KEY"
-            api_key = os.getenv(secret_key)
-            
+            api_key = secrets_manager.get_provider_api_key(provider_name)
+
             if api_key:
                 provider_config['api_key'] = api_key
             elif 'api_key' not in provider_config:
                 print(f"[WARN] API ключ для провайдера {provider_name} не найден")
-        
+
         return config_data
     
     def _validate_config_data(self, config_data: Dict[str, Any]) -> None:
@@ -235,6 +234,28 @@ class ConfigManager:
                 "max_message_size_mb": 10,
                 "ping_interval_seconds": 30,
                 "ping_timeout_seconds": 60
+            },
+            "security": {
+                "admin_ip_whitelist": ["127.0.0.1", "192.168.1.0/24"],
+                "enable_request_signing": False,
+                "request_signing_ttl_seconds": 300,
+                "request_signing_credentials_path": "~/.vagus/client_credentials.json",
+                "audit_db_path": "audit_trail.db",
+                "rate_limit": {
+                    "anonymous_requests_per_minute": 10,
+                    "user_requests_per_minute": 100,
+                    "admin_requests_per_minute": 1000,
+                    "redis_url": None
+                }
+            },
+            "jwt": {
+                "secret_rotation_days": 30,
+                "max_old_secrets": 3
+            },
+            "secrets": {
+                "backend": "local",
+                "vault_addr": "http://localhost:8200",
+                "vault_token": ""
             },
             "providers": {
                 "openai": {

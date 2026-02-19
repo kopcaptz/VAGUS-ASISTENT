@@ -140,6 +140,29 @@ websocket:
   ping_interval_seconds: 30
   ping_timeout_seconds: 60
 
+security:
+  admin_ip_whitelist:
+    - "127.0.0.1"
+    - "192.168.1.0/24"
+  enable_request_signing: false
+  request_signing_ttl_seconds: 300
+  request_signing_credentials_path: "~/.vagus/client_credentials.json"
+  audit_db_path: "audit_trail.db"
+  rate_limit:
+    anonymous_requests_per_minute: 10
+    user_requests_per_minute: 100
+    admin_requests_per_minute: 1000
+    redis_url: null
+
+jwt:
+  secret_rotation_days: 30
+  max_old_secrets: 3
+
+secrets:
+  backend: local # local | vault
+  vault_addr: http://localhost:8200
+  vault_token: ""
+
 layer1:
   router:
     enable_cache: true
@@ -154,6 +177,18 @@ layer1:
 - Rate limit: `100` сообщений в минуту на соединение (close code `1013`)
 - Невалидный токен: close code `1008`
 - Внутренняя ошибка: close code `1011`
+
+### Security enhancements
+
+- IP whitelist применяется к `/api/v1/admin/*`
+- CLI request signing:
+  - клиент хранит `client_id/client_secret` в `~/.vagus/client_credentials.json`
+  - сервер валидирует подпись HMAC-SHA256 через middleware
+- JWT secret rotation:
+  - авто-ротация по `jwt.secret_rotation_days`
+  - сохранение `jwt.max_old_secrets` прошлых ключей
+- Unified audit trail endpoint:
+  - `GET /api/v1/admin/audit-logs` (admin only)
 
 ## 10. Переменные окружения
 

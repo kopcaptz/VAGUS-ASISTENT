@@ -50,3 +50,75 @@ websocket:
 - `message_received` (входящее сообщение от клиента)
 - `close` (закрытие соединения)
 - `rate_limit_exceeded`, `message_too_big`, `pong_timeout`
+
+## Security enhancements
+
+### Admin IP whitelist
+
+- Middleware: `IPWhitelistMiddleware`
+- Scope: только пути `/api/v1/admin/*`
+- При нарушении: HTTP `403` + запись в лог приложения
+
+Конфигурация:
+
+```yaml
+security:
+  admin_ip_whitelist:
+    - "127.0.0.1"
+    - "192.168.1.0/24"
+```
+
+### Request signing (CLI → API)
+
+- CLI отправляет подпись HMAC-SHA256 для HTTP-запросов
+- Заголовки:
+  - `X-Vagus-Client-Id`
+  - `X-Vagus-Timestamp`
+  - `X-Vagus-Signature`
+- Креды клиента создаются автоматически при первом запуске:
+  - `~/.vagus/client_credentials.json`
+
+Серверная проверка включается конфигом:
+
+```yaml
+security:
+  enable_request_signing: true
+  request_signing_ttl_seconds: 300
+```
+
+### JWT secret rotation
+
+Конфигурация:
+
+```yaml
+jwt:
+  secret_rotation_days: 30
+  max_old_secrets: 3
+```
+
+- Новый секрет используется для подписания новых токенов
+- Старые секреты сохраняются для graceful валидации ранее выпущенных токенов
+
+### Unified audit trail
+
+- Endpoint: `GET /api/v1/admin/audit-logs` (admin only)
+- Таблица: `audit_log`
+- Поля: `timestamp`, `user_id`, `action`, `resource`, `details`, `ip_address`
+- Логируются:
+  - API requests
+  - CLI commands
+  - WebSocket events
+  - runtime config load/change events
+
+### Role-based HTTP rate limiting
+
+```yaml
+security:
+  rate_limit:
+    anonymous_requests_per_minute: 10
+    user_requests_per_minute: 100
+    admin_requests_per_minute: 1000
+    redis_url: null
+```
+
+- Если Redis недоступен или не настроен, используется in-memory sliding window backend.

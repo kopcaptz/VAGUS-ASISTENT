@@ -99,6 +99,7 @@ make docker-up
 | GET | `/api/v1/tasks` | Список задач |
 | DELETE | `/api/v1/tasks/{id}` | Отменить задачу |
 | GET | `/api/v1/tasks/ws/audit-log` | WebSocket audit log (admin only) |
+| GET | `/api/v1/admin/audit-logs` | Unified audit trail (admin only) |
 | GET | `/api/v1/agents` | Список агентов |
 | GET | `/api/v1/status` | Статус системы |
 | WS | `/api/v1/tasks/ws/{id}` | WebSocket стриминг |
@@ -123,6 +124,27 @@ websocket:
   ping_interval_seconds: 30
   ping_timeout_seconds: 60
 ```
+
+## Security hardening (Stage 2)
+
+- IP whitelist для `admin` endpoint'ов (`/api/v1/admin/*`) с поддержкой CIDR
+- Request signing для CLI (HMAC-SHA256, заголовки `X-Vagus-*`)
+- JWT secret rotation:
+  - автоматическая ротация каждые `N` дней
+  - хранение истории старых секретов для graceful decode
+- Secrets manager:
+  - backend `local` (env + local JSON)
+  - backend `vault` (опционально, c fallback на local)
+- Unified audit trail (`audit_log` в SQLite):
+  - API запросы
+  - CLI команды и аргументы
+  - WebSocket события
+  - события загрузки runtime-конфигурации
+- Role-based rate limiting:
+  - Anonymous: `10 req/min`
+  - User: `100 req/min`
+  - Admin: `1000 req/min`
+  - Redis backend (опционально), иначе in-memory
 
 ## CLI
 
@@ -149,7 +171,7 @@ vagus admin status
 ## Тестирование
 
 ```bash
-# Все тесты (169+)
+# Все тесты (200+)
 make test
 
 # По слоям
@@ -174,7 +196,7 @@ VAGUS-ASISTENT/
 │       ├── cli/         # Typer CLI
 │       └── channels/    # Telegram Bot
 ├── dashboard/           # Streamlit Dashboard
-├── tests/               # 169+ тестов
+├── tests/               # 200+ тестов
 ├── configs/             # Конфигурация YAML
 ├── docs/                # Документация
 ├── Makefile             # Команды сборки

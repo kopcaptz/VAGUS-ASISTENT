@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket
 
 from vagus.layer0.logging import get_logger
 
+from ..audit.audit_trail import AuditTrail
 from ..auth import decode_access_token
 from ..dependencies import get_current_user, get_orchestrator
 from ..models import (
@@ -65,9 +66,17 @@ def _get_audit_storage(app) -> WebSocketAuditStorage:
     return fallback_storage
 
 
+def _get_audit_trail(app) -> Optional[AuditTrail]:
+    storage = getattr(app.state, "audit_trail", None)
+    if isinstance(storage, AuditTrail):
+        return storage
+    return None
+
+
 def _log_audit(
     audit_storage: WebSocketAuditStorage,
     *,
+    app,
     event_type: str,
     user_id: Optional[str],
     task_id: Optional[str],
@@ -90,6 +99,26 @@ def _log_audit(
         )
     except Exception as exc:
         logger.warning("Failed to write websocket audit event '%s': %s", event_type, exc)
+
+    audit_trail = _get_audit_trail(app)
+    if audit_trail is None:
+        return
+    try:
+        audit_trail.log_action(
+            user_id=user_id,
+            action=f"websocket.{event_type}",
+            resource=task_id or "unknown-task",
+            details={
+                "message_size_bytes": message_size_bytes,
+                "message_type": message_type,
+                "close_code": close_code,
+                "reason": reason,
+                "duration_seconds": duration_seconds,
+            },
+            ip_address=None,
+        )
+    except Exception as exc:
+        logger.warning("Failed to write general audit trail websocket event '%s': %s", event_type, exc)
 
 
 def _extract_bearer_token(websocket: WebSocket) -> Optional[str]:
@@ -149,6 +178,7 @@ async def _send_json_with_audit(
     payload: dict,
     *,
     audit_storage: WebSocketAuditStorage,
+    app,
     user_id: Optional[str],
     task_id: str,
     message_type: str,
@@ -157,6 +187,7 @@ async def _send_json_with_audit(
     payload_size = len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
     _log_audit(
         audit_storage,
+        app=app,
         event_type="message_sent",
         user_id=user_id,
         task_id=task_id,
@@ -224,6 +255,7 @@ async def _heartbeat_loop(
             )
             _log_audit(
                 audit_storage,
+                app=websocket.app,
                 event_type="pong_timeout",
                 user_id=user_id,
                 task_id=task_id,
@@ -246,6 +278,7 @@ async def _heartbeat_loop(
                 websocket,
                 ping_payload,
                 audit_storage=audit_storage,
+                app=websocket.app,
                 user_id=user_id,
                 task_id=task_id,
                 message_type="ping",
@@ -297,6 +330,7 @@ async def _receive_loop(
             )
             _log_audit(
                 audit_storage,
+                app=websocket.app,
                 event_type="rate_limit_exceeded",
                 user_id=user_id,
                 task_id=task_id,
@@ -332,6 +366,7 @@ async def _receive_loop(
             )
             _log_audit(
                 audit_storage,
+                app=websocket.app,
                 event_type="message_too_big",
                 user_id=user_id,
                 task_id=task_id,
@@ -349,6 +384,7 @@ async def _receive_loop(
 
         _log_audit(
             audit_storage,
+            app=websocket.app,
             event_type="message_received",
             user_id=user_id,
             task_id=task_id,
@@ -481,6 +517,7 @@ async def stream_task_result(websocket: WebSocket, task_id: str):
         )
         _log_audit(
             audit_storage,
+            app=websocket.app,
             event_type="close",
             user_id=None,
             task_id=task_id,
@@ -493,6 +530,7 @@ async def stream_task_result(websocket: WebSocket, task_id: str):
     user_id = payload.get("sub", "unknown")
     _log_audit(
         audit_storage,
+        app=websocket.app,
         event_type="connect",
         user_id=user_id,
         task_id=task_id,
@@ -542,6 +580,7 @@ async def stream_task_result(websocket: WebSocket, task_id: str):
                     websocket,
                     {"content": content, "done": True},
                     audit_storage=audit_storage,
+                    app=websocket.app,
                     user_id=user_id,
                     task_id=task_id,
                     message_type="task_result",
@@ -566,6 +605,7 @@ async def stream_task_result(websocket: WebSocket, task_id: str):
                 websocket,
                 {"content": None, "done": False},
                 audit_storage=audit_storage,
+                app=websocket.app,
                 user_id=user_id,
                 task_id=task_id,
                 message_type="task_status",
@@ -599,6 +639,7 @@ async def stream_task_result(websocket: WebSocket, task_id: str):
 
         _log_audit(
             audit_storage,
+            app=websocket.app,
             event_type="close",
             user_id=user_id,
             task_id=task_id,

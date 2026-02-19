@@ -148,6 +148,81 @@ class WebSocketConfig(BaseModel):
     )
 
 
+class SecurityRateLimitConfig(BaseModel):
+    """Ролевые лимиты API-запросов."""
+
+    anonymous_requests_per_minute: int = Field(default=10, ge=1, le=100000)
+    user_requests_per_minute: int = Field(default=100, ge=1, le=100000)
+    admin_requests_per_minute: int = Field(default=1000, ge=1, le=100000)
+    redis_url: Optional[str] = Field(
+        default=None,
+        description="Redis URL для rate limiter (если не задан, используется in-memory)",
+    )
+
+
+class SecurityConfig(BaseModel):
+    """Конфигурация общих security-настроек API."""
+
+    admin_ip_whitelist: List[str] = Field(
+        default_factory=list,
+        description="Список IP/CIDR, которым разрешён доступ к /api/v1/admin/*",
+    )
+    enable_request_signing: bool = Field(
+        default=False,
+        description="Требовать HMAC-подпись запросов от CLI",
+    )
+    request_signing_ttl_seconds: int = Field(
+        default=300,
+        ge=1,
+        le=3600,
+        description="Допустимая разница времени для подписи запроса",
+    )
+    request_signing_credentials_path: Optional[str] = Field(
+        default=None,
+        description="Путь к client_credentials.json для server-side verification",
+    )
+    audit_db_path: str = Field(
+        default="audit_trail.db",
+        description="SQLite файл для unified audit trail",
+    )
+    rate_limit: SecurityRateLimitConfig = Field(default_factory=SecurityRateLimitConfig)
+
+
+class JWTConfig(BaseModel):
+    """Конфигурация ротации JWT секретов."""
+
+    secret_rotation_days: int = Field(
+        default=30,
+        ge=1,
+        le=3650,
+        description="Период ротации JWT-секрета",
+    )
+    max_old_secrets: int = Field(
+        default=3,
+        ge=1,
+        le=20,
+        description="Сколько старых секретов сохранять для graceful rotation",
+    )
+
+
+class SecretsConfig(BaseModel):
+    """Конфигурация secrets backend."""
+
+    backend: str = Field(
+        default="local",
+        description="Backend для secrets: local или vault",
+    )
+    vault_addr: Optional[str] = Field(default=None, description="URL Hashicorp Vault")
+    vault_token: Optional[str] = Field(default=None, description="Токен Vault")
+
+    @validator("backend")
+    def validate_backend(cls, v):
+        value = (v or "").strip().lower()
+        if value not in {"local", "vault"}:
+            raise ValueError("secrets.backend must be 'local' or 'vault'")
+        return value
+
+
 class AppConfig(BaseModel):
     """Основная конфигурация приложения."""
     version: int = Field(default=1, ge=1, description="Версия конфигурации")
@@ -157,6 +232,9 @@ class AppConfig(BaseModel):
     agents: Dict[str, AgentConfig] = Field(default_factory=dict, description="Агенты")
     skills: Dict[str, SkillConfig] = Field(default_factory=dict, description="Навыки")
     websocket: WebSocketConfig = Field(default_factory=WebSocketConfig, description="Настройки WebSocket")
+    security: SecurityConfig = Field(default_factory=SecurityConfig, description="Security настройки API")
+    jwt: JWTConfig = Field(default_factory=JWTConfig, description="Настройки JWT")
+    secrets: SecretsConfig = Field(default_factory=SecretsConfig, description="Настройки secrets backend")
     
     @validator('version')
     def validate_version(cls, v):

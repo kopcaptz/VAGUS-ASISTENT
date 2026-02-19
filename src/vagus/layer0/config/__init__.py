@@ -11,6 +11,7 @@ from .models import (
     SkillConfig,
     LogLevel
 )
+from .secrets_manager import SecretsManager
 
 __all__ = [
     'ConfigManager',
@@ -19,5 +20,6 @@ __all__ = [
     'ProviderConfig',
     'AgentConfig',
     'SkillConfig',
-    'LogLevel'
+    'LogLevel',
+    'SecretsManager',
 ]
