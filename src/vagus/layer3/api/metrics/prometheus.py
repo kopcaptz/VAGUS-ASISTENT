@@ -296,7 +296,6 @@ def update_circuit_breaker_state_from_router(llm_router: object) -> None:
     fallback_handler = getattr(llm_router, "fallback_handler", None)
     breakers = getattr(fallback_handler, "_circuit_breakers", {}) if fallback_handler else {}
     if not isinstance(breakers, dict) or not breakers:
-        set_circuit_breaker_state(0)
         return
 
     highest = 0

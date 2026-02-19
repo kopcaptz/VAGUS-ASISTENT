@@ -29,7 +29,8 @@ if STREAMLIT_AVAILABLE:
             "- **Tasks** — создание и просмотр задач\n"
             "- **Monitoring** — метрики системы\n"
             "- **Agents** — информация об агентах\n"
-            "- **Settings** — настройки"
+                "- **Settings** — настройки\n"
+                "- **Performance** — realtime performance dashboard"
         )
     else:
         st.markdown("### Вход в систему")

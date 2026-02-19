@@ -43,8 +43,14 @@
 - **Слой 3**: Интерфейсы
   - REST API (FastAPI) с JWT-аутентификацией и усиленным WebSocket
   - CLI (Typer) с rich-форматированием
-  - Web Dashboard (Streamlit, 4 страницы)
+  - Web Dashboard (Streamlit, 5 страниц)
   - Telegram Bot (aiogram 3.x)
+  - Monitoring & Observability:
+    - Prometheus endpoint `/metrics`
+    - Detailed dependency health `/health/detailed`
+    - Structured JSON logging (trace_id/request_id)
+    - Alerting engine (Telegram/SMTP/Webhook)
+    - Grafana dashboard templates + Prometheus stack
 
 ## Требования
 
@@ -104,6 +110,8 @@ make docker-up
 | GET | `/api/v1/status` | Статус системы |
 | WS | `/api/v1/tasks/ws/{id}` | WebSocket стриминг |
 | GET | `/health` | Health check |
+| GET | `/health/detailed` | Детальный health check (зависимости + thresholds) |
+| GET | `/metrics` | Prometheus metrics endpoint |
 
 ## WebSocket hardening
 
@@ -146,6 +154,33 @@ websocket:
   - Admin: `1000 req/min`
   - Redis backend (опционально), иначе in-memory
 
+## Monitoring & Observability (Stage 3)
+
+- **Prometheus metrics**: `GET /metrics`
+  - `http_requests_total` (labels: `method`, `endpoint`, `status`)
+  - `http_request_duration_seconds` (histogram)
+  - `websocket_connections_active` (gauge)
+  - `task_execution_total` (labels: `agent_type`, `status`)
+  - `llm_requests_total` (labels: `provider`, `model`, `status`)
+  - `cache_hits_total`, `cache_misses_total`
+  - `circuit_breaker_state` (`0=closed`, `1=open`, `2=half-open`)
+- **Detailed health checks**: `GET /health/detailed`
+  - SQLite connectivity
+  - Redis connectivity (если настроен)
+  - LLM providers availability
+  - Secrets manager connectivity
+  - Disk space / Memory usage (с threshold-конфигом)
+- **Structured logging**
+  - JSON поля: `timestamp`, `level`, `message`, `trace_id`, `request_id`, `user_id`, `agent_id`, `duration_ms`, `component`
+  - Интеграция: FastAPI middleware, CLI и WebSocket paths
+- **Alerting**
+  - Правила: high error rate, high latency, circuit breaker open, low disk space, provider down
+  - Каналы: Telegram bot, Email (SMTP), Webhook
+  - YAML-конфиг: `configs/alerting.yaml.example`
+- **Grafana + Prometheus**
+  - assets: `monitoring/grafana/*.json`
+  - stack: `monitoring/docker-compose.yml`
+
 ## CLI
 
 ```bash
@@ -171,7 +206,7 @@ vagus admin status
 ## Тестирование
 
 ```bash
-# Все тесты (200+)
+# Все тесты (250+)
 make test
 
 # По слоям
@@ -195,7 +230,8 @@ VAGUS-ASISTENT/
 │       ├── api/         # FastAPI + JWT + WebSocket
 │       ├── cli/         # Typer CLI
 │       └── channels/    # Telegram Bot
-├── dashboard/           # Streamlit Dashboard
+├── dashboard/           # Streamlit Dashboard (включая Performance page)
+├── monitoring/          # Grafana dashboards + Prometheus config + compose
 ├── tests/               # 200+ тестов
 ├── configs/             # Конфигурация YAML
 ├── docs/                # Документация
