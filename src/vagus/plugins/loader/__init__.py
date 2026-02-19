@@ -9,6 +9,12 @@ from .plugin_loader import (
     PluginLoaderError,
     PyPILoader,
 )
+from .secure_loader import (
+    DependencyVettingError,
+    SecurePluginLoader,
+    SecurityScanError,
+    SignatureValidationError,
+)
 
 __all__ = [
     "PluginLoaderError",
@@ -18,4 +24,8 @@ __all__ = [
     "LocalLoader",
     "GitLoader",
     "PyPILoader",
+    "SecurePluginLoader",
+    "SecurityScanError",
+    "DependencyVettingError",
+    "SignatureValidationError",
 ]

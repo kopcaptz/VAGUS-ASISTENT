@@ -294,6 +294,14 @@ class ConfigManager:
                     "enabled": True,
                     "memory_limit_mb": 512,
                     "timeout_seconds": 30,
+                    "filesystem_whitelist": ["/tmp", "./data"],
+                    "network_whitelist": ["api.openai.com", "api.anthropic.com"],
+                },
+                "security": {
+                    "require_signatures": False,
+                    "trusted_keys": [],
+                    "max_plugin_dependencies": 10,
+                    "banned_imports": ["os.system", "subprocess.Popen", "ctypes"],
                 },
                 "marketplace": {
                     "url": "https://plugins.vagus.ai",

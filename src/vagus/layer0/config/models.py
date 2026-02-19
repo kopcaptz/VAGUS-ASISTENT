@@ -255,6 +255,19 @@ class PluginsSandboxConfig(BaseModel):
     enabled: bool = Field(default=True)
     memory_limit_mb: int = Field(default=512, ge=64, le=16384)
     timeout_seconds: int = Field(default=30, ge=1, le=3600)
+    filesystem_whitelist: List[str] = Field(
+        default_factory=lambda: ["/tmp", "./data"],
+        description="Разрешённые пути файловой системы для plugin sandbox",
+    )
+    network_whitelist: List[str] = Field(
+        default_factory=lambda: ["api.openai.com", "api.anthropic.com"],
+        description="Разрешённые домены для sandbox network access",
+    )
+
+    @validator("filesystem_whitelist", "network_whitelist")
+    def validate_whitelists(cls, v):
+        normalized = [str(item).strip() for item in v if str(item).strip()]
+        return normalized
 
 
 class PluginsMarketplaceConfig(BaseModel):
@@ -262,6 +275,21 @@ class PluginsMarketplaceConfig(BaseModel):
 
     url: str = Field(default="https://plugins.vagus.ai")
     cache_ttl_hours: int = Field(default=24, ge=1, le=720)
+
+
+class PluginsSecurityConfig(BaseModel):
+    """Security-настройки плагинной системы."""
+
+    require_signatures: bool = Field(default=False)
+    trusted_keys: List[str] = Field(default_factory=list)
+    max_plugin_dependencies: int = Field(default=10, ge=0, le=100)
+    banned_imports: List[str] = Field(
+        default_factory=lambda: ["os.system", "subprocess.Popen", "ctypes"]
+    )
+
+    @validator("trusted_keys", "banned_imports")
+    def validate_string_list_values(cls, v):
+        return [str(item).strip() for item in v if str(item).strip()]
 
 
 class PluginsConfig(BaseModel):
@@ -273,6 +301,7 @@ class PluginsConfig(BaseModel):
         default_factory=lambda: ["./plugins", "~/.vagus/plugins"]
     )
     sandbox: PluginsSandboxConfig = Field(default_factory=PluginsSandboxConfig)
+    security: PluginsSecurityConfig = Field(default_factory=PluginsSecurityConfig)
     marketplace: PluginsMarketplaceConfig = Field(default_factory=PluginsMarketplaceConfig)
 
     @validator("scan_directories")
