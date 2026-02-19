@@ -4,6 +4,11 @@ pydantic>=2.0
 # Layer 3 - API
 fastapi>=0.100
 uvicorn>=0.22
+
+# Layer 3 - CLI
+typer>=0.9
+rich>=13.0
+httpx>=0.24
 python-jose[cryptography]>=3.3
 passlib[bcrypt]>=1.7
 python-dotenv>=1.0

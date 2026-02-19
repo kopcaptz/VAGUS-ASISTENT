@@ -20,6 +20,8 @@ try:
     WATCHDOG_AVAILABLE = True
 except ImportError:
     WATCHDOG_AVAILABLE = False
+    Observer = None
+    FileSystemEventHandler = object
 
 
 class ConfigReloadHandler(FileSystemEventHandler):

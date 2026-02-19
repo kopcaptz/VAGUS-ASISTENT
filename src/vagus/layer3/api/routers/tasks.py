@@ -92,6 +92,25 @@ async def create_task(
     )
 
 
+@router.get("", response_model=list)
+async def list_tasks(
+    request: Request,
+    limit: int = 10,
+    _user: Any = Depends(get_current_user),
+):
+    """Список последних задач (по created_at)."""
+    task_store = get_task_store(request)
+    items = []
+    for tid, task in task_store.items():
+        resp = _task_to_response(tid, task)
+        items.append({
+            **resp.model_dump(),
+            "prompt": task.get("prompt", ""),
+        })
+    items.sort(key=lambda x: x["created_at"], reverse=True)
+    return items[:limit]
+
+
 @router.get("/{task_id}", response_model=TaskStatusResponse)
 async def get_task_status(
     task_id: str,
