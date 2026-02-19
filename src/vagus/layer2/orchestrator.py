@@ -86,6 +86,98 @@ class TaskOrchestrator:
                 )
             return {"error": str(e)}
 
+    async def execute_multi_step_task(
+        self,
+        task_id: str,
+        steps: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """
+        Выполняет многошаговую задачу (цепочку шагов).
+        Каждый шаг: {"type": "research"|"code"|"analysis", "prompt": "..."}
+        Результаты предыдущих шагов передаются в контекст следующим.
+        Записывает каждый шаг в EpisodicMemory.
+        """
+        if not steps:
+            return {"error": "Empty steps", "steps_results": []}
+
+        self.logger.info(f"Multi-step task {task_id}: {len(steps)} steps")
+        steps_results: List[Dict[str, Any]] = []
+        context: Dict[str, Any] = {"previous_steps": []}
+
+        for i, step_def in enumerate(steps):
+            step_type = step_def.get("type", "default")
+            prompt = step_def.get("prompt", "").strip()
+            step_task_id = f"{task_id}_step_{i}"
+
+            agent = self._select_agent(step_type)
+            if not agent:
+                err = {"error": f"No agent for type={step_type}", "step_index": i}
+                steps_results.append(err)
+                if self.memory:
+                    self.memory.add_step(
+                        task_id,
+                        "orchestrator",
+                        "multi_step",
+                        err,
+                        metadata={"step_index": i, "step_type": step_type, "failed": True},
+                    )
+                return {
+                    "error": f"No agent for step type={step_type}",
+                    "steps_results": steps_results,
+                }
+
+            task = {
+                "task_id": step_task_id,
+                "prompt": prompt,
+                "task_type": step_type,
+            }
+
+            try:
+                result = await agent.process(task, context=context)
+                steps_results.append(result)
+
+                if self.memory:
+                    self.memory.add_step(
+                        task_id,
+                        agent.name,
+                        "process",
+                        result,
+                        metadata={
+                            "step_index": i,
+                            "step_type": step_type,
+                            "prompt": prompt[:100],
+                        },
+                    )
+
+                # Агрегация: добавляем результат в контекст для следующих шагов
+                context["previous_steps"].append(
+                    {"content": result.get("content", ""), "result": result}
+                )
+
+            except Exception as e:
+                self.logger.error(f"Step {i} failed: {e}")
+                err_result = {"error": str(e), "step_index": i}
+                steps_results.append(err_result)
+                if self.memory:
+                    self.memory.add_step(
+                        task_id,
+                        agent.name,
+                        "process",
+                        err_result,
+                        metadata={"step_index": i, "step_type": step_type, "failed": True},
+                    )
+                return {
+                    "error": str(e),
+                    "steps_results": steps_results,
+                }
+
+        # Агрегированный результат
+        return {
+            "steps_results": steps_results,
+            "step_count": len(steps_results),
+            "context": context,
+        }
+
     def _select_agent(self, task_type: str) -> Optional[BaseAgent]:
         """Выбирает агента по типу задачи. Пока — первый подходящий."""
         for agent in self.agents:
