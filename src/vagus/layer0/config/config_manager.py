@@ -231,6 +231,11 @@ class ConfigManager:
                 "max_concurrent_requests": 10,
                 "api_timeout": 30
             },
+            "websocket": {
+                "max_message_size_mb": 10,
+                "ping_interval_seconds": 30,
+                "ping_timeout_seconds": 60
+            },
             "providers": {
                 "openai": {
                     "endpoint": "https://api.openai.com/v1",

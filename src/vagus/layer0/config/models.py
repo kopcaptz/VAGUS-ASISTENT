@@ -119,6 +119,35 @@ class SkillConfig(BaseModel):
         return v
 
 
+class WebSocketConfig(BaseModel):
+    """Конфигурация WebSocket hardening."""
+
+    max_message_size_mb: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Максимальный размер входящего сообщения в MB",
+    )
+    ping_interval_seconds: int = Field(
+        default=30,
+        ge=1,
+        le=300,
+        description="Интервал отправки ping сервером",
+    )
+    ping_timeout_seconds: int = Field(
+        default=60,
+        ge=1,
+        le=600,
+        description="Таймаут ожидания pong от клиента",
+    )
+    max_messages_per_minute: int = Field(
+        default=100,
+        ge=1,
+        le=10000,
+        description="Лимит входящих сообщений в минуту на соединение",
+    )
+
+
 class AppConfig(BaseModel):
     """Основная конфигурация приложения."""
     version: int = Field(default=1, ge=1, description="Версия конфигурации")
@@ -127,6 +156,7 @@ class AppConfig(BaseModel):
     providers: Dict[str, ProviderConfig] = Field(default_factory=dict, description="Провайдеры LLM")
     agents: Dict[str, AgentConfig] = Field(default_factory=dict, description="Агенты")
     skills: Dict[str, SkillConfig] = Field(default_factory=dict, description="Навыки")
+    websocket: WebSocketConfig = Field(default_factory=WebSocketConfig, description="Настройки WebSocket")
     
     @validator('version')
     def validate_version(cls, v):

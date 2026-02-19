@@ -135,12 +135,25 @@ providers:
     endpoint: https://api.openai.com/v1
     models: [gpt-4o, gpt-4o-mini]
 
+websocket:
+  max_message_size_mb: 10
+  ping_interval_seconds: 30
+  ping_timeout_seconds: 60
+
 layer1:
   router:
     enable_cache: true
     enable_budgeting: true
     default_strategy: hybrid
 ```
+
+### WebSocket limits и close codes
+
+- Максимальный размер входящего WS-сообщения: `10 MB` (close code `1009`)
+- Heartbeat: ping каждые `30` секунд, timeout pong: `60` секунд
+- Rate limit: `100` сообщений в минуту на соединение (close code `1013`)
+- Невалидный токен: close code `1008`
+- Внутренняя ошибка: close code `1011`
 
 ## 10. Переменные окружения
 

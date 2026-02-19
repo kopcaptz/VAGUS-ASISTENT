@@ -13,6 +13,7 @@ from vagus.layer3.api.models import (
     TaskStatusResponse,
     TokenRequest,
     TokenResponse,
+    WebSocketAuditLogEntry,
     WebSocketStreamChunk,
 )
 
@@ -116,6 +117,25 @@ def test_websocket_stream_chunk():
 def test_error_response():
     err = ErrorResponse(detail="something went wrong")
     assert err.detail == "something went wrong"
+
+
+def test_websocket_audit_log_entry():
+    from datetime import datetime, timezone
+
+    entry = WebSocketAuditLogEntry(
+        id=1,
+        event_type="connect",
+        user_id="admin",
+        task_id="task-1",
+        timestamp=datetime.now(timezone.utc),
+        message_size_bytes=None,
+        message_type=None,
+        close_code=None,
+        reason=None,
+        duration_seconds=None,
+    )
+    assert entry.id == 1
+    assert entry.event_type == "connect"
 
 
 def test_task_list_item():
