@@ -1,15 +1,19 @@
-# Vagus Asistent - пример конфигурации
-# Скопируйте в vagus.yaml и настройте
+# Vagus Asistent — полный пример конфигурации
+# Скопируйте в configs/vagus.yaml и настройте
 
 version: 1
 name: Vagus Asistent
+
+# ─── Глобальные настройки ───────────────────────────────────────────
 global:
-  default_model: gpt-4o-mini
-  log_level: INFO
-  workspace_path: ./workspace
+  default_model: "openai/gpt-4o-mini"
+  log_level: "INFO"
+  workspace_path: "./workspace"
   max_concurrent_requests: 10
   api_timeout: 30
 
+# ─── Провайдеры LLM ────────────────────────────────────────────────
+# API-ключи загружаются из .env (OPENAI_API_KEY, ANTHROPIC_API_KEY, ...)
 providers:
   openai:
     endpoint: https://api.openai.com/v1
@@ -30,18 +34,88 @@ providers:
     enabled: true
     models: [deepseek-chat]
 
+# ─── Слой 1: LLM Router ────────────────────────────────────────────
 layer1:
   router:
     enable_cache: true
     enable_budgeting: true
     enable_monitoring: true
-    default_strategy: hybrid
+    default_strategy: hybrid    # cost | latency | quality | hybrid
   cache:
     ttl_seconds: 3600
     max_size_mb: 100
   budgeting:
     daily_limit_usd: 10.0
-    monthly_limit_usd: 200.0
+    monthly_limit_usd: 100.0
   monitoring:
-    db_path: metrics.db
+    db_path: "./data/metrics.db"
     retention_days: 30
+  fallback:
+    retry_count: 3
+    backoff_factor: 2.0
+    base_delay_seconds: 1.0
+    circuit_breaker_threshold: 5
+    providers: [openai, anthropic, deepseek]
+
+# ─── Слой 2: Оркестрация ───────────────────────────────────────────
+layer2:
+  orchestrator:
+    max_concurrency: 5
+    task_timeout: 300
+  memory:
+    episodic_enabled: true
+    semantic_enabled: true
+    max_history: 1000
+
+# ─── Слой 3: Интерфейсы ────────────────────────────────────────────
+layer3:
+  api:
+    host: "0.0.0.0"
+    port: 8000
+    cors_origins: ["http://localhost:8501", "http://localhost:3000"]
+    rate_limit_requests: 60
+    rate_limit_window_seconds: 60
+  auth:
+    access_token_expire_minutes: 15
+    refresh_token_expire_days: 7
+    # VAGUS_SECRET_KEY загружается из .env
+  dashboard:
+    port: 8501
+  telegram:
+    enabled: false
+    # TELEGRAM_BOT_TOKEN загружается из .env
+  discord:
+    enabled: false
+
+# ─── Агенты ─────────────────────────────────────────────────────────
+agents:
+  coordinator:
+    name: "Главный агент"
+    description: "Координатор задач"
+    model: gpt-4o
+    temperature: 0.7
+    max_tokens: 1500
+    top_p: 1.0
+    skills: [research, code, summary]
+    enabled: true
+
+# ─── Навыки ─────────────────────────────────────────────────────────
+skills:
+  research:
+    name: "Исследование"
+    description: "Поиск и анализ информации"
+    version: "1.0.0"
+    enabled: true
+    dependencies: []
+  code:
+    name: "Кодирование"
+    description: "Генерация и выполнение Python-кода"
+    version: "1.0.0"
+    enabled: true
+    dependencies: []
+  summary:
+    name: "Суммаризация"
+    description: "Краткое изложение текста"
+    version: "1.0.0"
+    enabled: true
+    dependencies: []

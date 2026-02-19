@@ -9,6 +9,8 @@ import threading
 from pathlib import Path
 from typing import Optional, Dict, Any, Callable
 from dotenv import load_dotenv
+
+_SENTINEL = object()
 from pydantic import ValidationError
 
 from .models import AppConfig
@@ -218,7 +220,65 @@ class ConfigManager:
         if not self._config:
             return self.load()
         return self._config
-    
+
+    def get(self, dotted_path: str, default: Any = None) -> Any:
+        """
+        Retrieves a config value by dot-separated path.
+
+        Examples:
+            cm.get("layer1.cache.ttl_seconds")     -> 3600
+            cm.get("global.default_model")          -> "gpt-4"
+            cm.get("layer3.api.port", 8000)         -> 8000
+
+        Args:
+            dotted_path: Dot-separated path (e.g. "layer1.router.enable_cache")
+            default: Value returned when the path does not exist
+
+        Returns:
+            The resolved value or *default*.
+        """
+        config = self.get_config()
+        obj: Any = config
+        for part in dotted_path.split("."):
+            # "global" is an alias stored as "global_settings" on the model
+            if part == "global":
+                part = "global_settings"
+            if isinstance(obj, dict):
+                obj = obj.get(part, _SENTINEL)
+            elif hasattr(obj, part):
+                obj = getattr(obj, part)
+            else:
+                return default
+            if obj is _SENTINEL:
+                return default
+        return obj
+
+    def set(self, dotted_path: str, value: Any) -> None:
+        """
+        Sets a config value at runtime (in-memory only, not persisted).
+
+        Args:
+            dotted_path: Dot-separated path
+            value: New value
+        """
+        config = self.get_config()
+        parts = dotted_path.split(".")
+        obj: Any = config
+        for part in parts[:-1]:
+            if part == "global":
+                part = "global_settings"
+            if hasattr(obj, part):
+                obj = getattr(obj, part)
+            else:
+                raise KeyError(f"Config path not found: {dotted_path}")
+        last = parts[-1]
+        if last == "global":
+            last = "global_settings"
+        if hasattr(obj, last):
+            setattr(obj, last, value)
+        else:
+            raise KeyError(f"Config path not found: {dotted_path}")
+
     def save_default_config(self) -> None:
         """Сохраняет пример конфигурации."""
         default_config = {

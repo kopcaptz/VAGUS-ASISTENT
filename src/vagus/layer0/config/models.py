@@ -119,6 +119,94 @@ class SkillConfig(BaseModel):
         return v
 
 
+# ─── Layer-specific configuration models ───────────────────────────
+
+
+class Layer1RouterConfig(BaseModel):
+    """Layer 1 router settings."""
+    enable_cache: bool = Field(default=True)
+    enable_budgeting: bool = Field(default=True)
+    enable_monitoring: bool = Field(default=True)
+    default_strategy: str = Field(default="hybrid")
+
+
+class Layer1CacheConfig(BaseModel):
+    """Layer 1 cache settings."""
+    ttl_seconds: int = Field(default=3600, ge=1)
+    max_size_mb: int = Field(default=100, ge=1)
+
+
+class Layer1BudgetingConfig(BaseModel):
+    """Layer 1 budgeting settings."""
+    daily_limit_usd: float = Field(default=10.0, ge=0)
+    monthly_limit_usd: float = Field(default=100.0, ge=0)
+
+
+class Layer1MonitoringConfig(BaseModel):
+    """Layer 1 monitoring settings."""
+    db_path: str = Field(default="./data/metrics.db")
+    retention_days: int = Field(default=30, ge=1)
+
+
+class Layer1FallbackConfig(BaseModel):
+    """Layer 1 fallback / circuit-breaker settings."""
+    retry_count: int = Field(default=3, ge=0)
+    backoff_factor: float = Field(default=2.0, ge=1.0)
+    base_delay_seconds: float = Field(default=1.0, ge=0)
+    circuit_breaker_threshold: int = Field(default=5, ge=1)
+    providers: List[str] = Field(default_factory=lambda: ["openai", "anthropic", "deepseek"])
+    max_retries: Optional[int] = Field(default=None, description="Alias for retry_count")
+
+
+class Layer1Config(BaseModel):
+    """Complete Layer 1 configuration."""
+    router: Layer1RouterConfig = Field(default_factory=Layer1RouterConfig)
+    cache: Layer1CacheConfig = Field(default_factory=Layer1CacheConfig)
+    budgeting: Layer1BudgetingConfig = Field(default_factory=Layer1BudgetingConfig)
+    monitoring: Layer1MonitoringConfig = Field(default_factory=Layer1MonitoringConfig)
+    fallback: Layer1FallbackConfig = Field(default_factory=Layer1FallbackConfig)
+
+
+class Layer2OrchestratorConfig(BaseModel):
+    """Layer 2 orchestrator settings."""
+    max_concurrency: int = Field(default=5, ge=1)
+    task_timeout: int = Field(default=300, ge=1)
+
+
+class Layer2MemoryConfig(BaseModel):
+    """Layer 2 memory settings."""
+    episodic_enabled: bool = Field(default=True)
+    semantic_enabled: bool = Field(default=True)
+    max_history: int = Field(default=1000, ge=1)
+
+
+class Layer2Config(BaseModel):
+    """Complete Layer 2 configuration."""
+    orchestrator: Layer2OrchestratorConfig = Field(default_factory=Layer2OrchestratorConfig)
+    memory: Layer2MemoryConfig = Field(default_factory=Layer2MemoryConfig)
+
+
+class Layer3ApiConfig(BaseModel):
+    """Layer 3 API server settings."""
+    host: str = Field(default="0.0.0.0")
+    port: int = Field(default=8000, ge=1, le=65535)
+    cors_origins: List[str] = Field(default_factory=lambda: ["http://localhost:8501"])
+    rate_limit_requests: int = Field(default=60, ge=1)
+    rate_limit_window_seconds: int = Field(default=60, ge=1)
+
+
+class Layer3AuthConfig(BaseModel):
+    """Layer 3 auth settings."""
+    access_token_expire_minutes: int = Field(default=15, ge=1)
+    refresh_token_expire_days: int = Field(default=7, ge=1)
+
+
+class Layer3Config(BaseModel):
+    """Complete Layer 3 configuration."""
+    api: Layer3ApiConfig = Field(default_factory=Layer3ApiConfig)
+    auth: Layer3AuthConfig = Field(default_factory=Layer3AuthConfig)
+
+
 class AppConfig(BaseModel):
     """Основная конфигурация приложения."""
     version: int = Field(default=1, ge=1, description="Версия конфигурации")
@@ -127,6 +215,9 @@ class AppConfig(BaseModel):
     providers: Dict[str, ProviderConfig] = Field(default_factory=dict, description="Провайдеры LLM")
     agents: Dict[str, AgentConfig] = Field(default_factory=dict, description="Агенты")
     skills: Dict[str, SkillConfig] = Field(default_factory=dict, description="Навыки")
+    layer1: Layer1Config = Field(default_factory=Layer1Config, description="Layer 1 settings")
+    layer2: Layer2Config = Field(default_factory=Layer2Config, description="Layer 2 settings")
+    layer3: Layer3Config = Field(default_factory=Layer3Config, description="Layer 3 settings")
     
     @validator('version')
     def validate_version(cls, v):
