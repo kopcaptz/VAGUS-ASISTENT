@@ -39,6 +39,10 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class HealthResponse(BaseModel):
+    status: str = "ok"
+
+
 RATE_LIMIT_MAX = 60
 RATE_LIMIT_WINDOW = 60
 
@@ -57,6 +61,10 @@ def create_app(
     app.state.orchestrator = orchestrator
     app.state.tasks = _tasks
     app.state.ws_connections = _ws_connections
+
+    @app.get("/health", response_model=HealthResponse)
+    async def health() -> HealthResponse:
+        return HealthResponse()
 
     def _check_rate(request: Request) -> None:
         client = request.client.host if request.client else "unknown"
@@ -148,3 +156,6 @@ def create_app(
         return {"total_tasks": total, "completed": completed, "pending": pending, "user": user}
 
     return app
+
+
+app = create_app()
