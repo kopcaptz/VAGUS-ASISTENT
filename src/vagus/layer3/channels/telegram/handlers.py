@@ -7,16 +7,18 @@ from typing import Optional
 try:
     from aiogram import Router
     from aiogram.filters import Command, CommandStart
-    from aiogram.types import Message
+    from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
     AIOGRAM_AVAILABLE = True
 except ImportError:
     AIOGRAM_AVAILABLE = False
 
 from ..gateway import ChannelGateway
+from ....plugins.integration import get_telegram_plugin_integration
 
 router = Router() if AIOGRAM_AVAILABLE else None  # type: ignore[assignment]
 gateway: Optional[ChannelGateway] = None
+plugin_telegram_integration = get_telegram_plugin_integration()
 
 
 def set_gateway(gw: ChannelGateway) -> None:
@@ -59,6 +61,34 @@ if AIOGRAM_AVAILABLE:
         status = "онлайн" if healthy else "недоступен"
         await message.answer(f"Статус API: {status}")
 
+    @router.message(Command("plugins"))
+    async def cmd_plugins(message: Message):
+        buttons = plugin_telegram_integration.get_inline_buttons()
+        if not buttons:
+            await message.answer("Плагин-кнопки не зарегистрированы.")
+            return
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=item["text"], callback_data=item["callback_data"])]
+                for item in buttons
+            ]
+        )
+        await message.answer("Доступные действия плагинов:", reply_markup=keyboard)
+
+    @router.callback_query()
+    async def on_plugin_callback(callback: CallbackQuery):
+        callback_data = callback.data or ""
+        result = await plugin_telegram_integration.process_callback(
+            callback_data,
+            {
+                "user_id": str(callback.from_user.id) if callback.from_user else "unknown",
+                "chat_id": str(callback.message.chat.id) if callback.message else "unknown",
+            },
+        )
+        if result is not None and callback.message is not None:
+            await callback.message.answer(result)
+        await callback.answer()
+
     @router.message()
     async def handle_message(message: Message):
         """Основной обработчик текстовых сообщений."""
@@ -71,6 +101,14 @@ if AIOGRAM_AVAILABLE:
 
         user_id = str(message.from_user.id) if message.from_user else "unknown"
         chat_id = str(message.chat.id)
+
+        plugin_result = await plugin_telegram_integration.process_message(
+            message.text,
+            {"user_id": user_id, "chat_id": chat_id},
+        )
+        if plugin_result is not None:
+            await message.answer(plugin_result)
+            return
 
         thinking_msg = await message.answer("Обрабатываю запрос...")
 

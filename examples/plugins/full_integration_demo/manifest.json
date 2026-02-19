@@ -1,0 +1,44 @@
+{
+  "name": "full_integration_demo",
+  "version": "1.0.0",
+  "author": "Vagus Team",
+  "description": "Demo plugin with agent/router/dashboard/cli/telegram integration points",
+  "dependencies": [],
+  "python_version": ">=3.10",
+  "vagus_version": ">=0.1.0",
+  "entry_point": "plugin:FullIntegrationDemoPlugin",
+  "hooks": [
+    {
+      "name": "pre_task_execution",
+      "priority": 70,
+      "callback": "FullIntegrationDemoPlugin.pre_task_execution",
+      "is_async": false
+    },
+    {
+      "name": "post_task_execution",
+      "priority": 70,
+      "callback": "FullIntegrationDemoPlugin.post_task_execution",
+      "is_async": false
+    },
+    {
+      "name": "pre_llm_call",
+      "priority": 60,
+      "callback": "FullIntegrationDemoPlugin.pre_llm_call",
+      "is_async": false
+    }
+  ],
+  "permissions": [],
+  "runtime_permissions": {
+    "level": "READ",
+    "filesystem": {
+      "read": [
+        "./data"
+      ],
+      "write": []
+    },
+    "network": [],
+    "environment_variables": [],
+    "max_memory_mb": 256,
+    "max_execution_time_seconds": 20
+  }
+}

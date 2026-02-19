@@ -24,6 +24,10 @@ src/vagus/plugins/
 ├── analytics/      # Usage metrics and recommendations
 ├── tools/          # Plugin developer tooling (templates)
 ├── backup/         # Backup and restore
+├── lifecycle/      # Full lifecycle state transitions
+├── performance/    # Lazy loading and execution optimization
+├── migration/      # Config migration and rollback
+├── integration/    # App-surface integration registries
 ├── security/       # Signature verification and trust store
 ├── monitoring/     # Runtime health and anomaly monitoring
 └── marketplace/    # Marketplace integration primitives

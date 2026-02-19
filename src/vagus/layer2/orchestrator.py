@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from .memory.episodic import EpisodicMemory
     from .memory.semantic import SemanticMemory
     from ..monitoring.error_analytics import ErrorAnalyticsStorage
+    from ..plugins.hooks import HookSystem
 
 
 class _InMemorySharedTaskQueue:
@@ -146,6 +147,7 @@ class TaskOrchestrator:
         skill_system: Optional[SkillSystem] = None,
         error_analytics: Optional["ErrorAnalyticsStorage"] = None,
         cluster_config: Optional[Dict[str, Any]] = None,
+        plugin_hook_system: Optional["HookSystem"] = None,
     ):
         """
         Args:
@@ -161,6 +163,7 @@ class TaskOrchestrator:
         self.dead_letter_queue = dead_letter_queue or DeadLetterQueueStorage()
         self.skill_system = skill_system or SkillSystem()
         self.error_analytics = error_analytics
+        self.plugin_hook_system = plugin_hook_system
         self.logger = get_logger("layer2.orchestrator")
         self.task_timeouts = self._normalize_task_timeouts(task_timeouts)
         self.cluster_config = self._normalize_cluster_config(cluster_config)
@@ -511,6 +514,22 @@ class TaskOrchestrator:
         Записывает шаги в EpisodicMemory при наличии.
         При наличии SemanticMemory: ищет похожие задачи и добавляет контекст.
         """
+        original_task_payload = {
+            "task_id": task_id,
+            "prompt": prompt,
+            "task_type": task_type,
+            "metadata": metadata or {},
+        }
+        task_payload = await self._run_pre_task_hooks(original_task_payload)
+        task_id = str(task_payload.get("task_id", task_id))
+        prompt = str(task_payload.get("prompt", prompt))
+        task_type = str(task_payload.get("task_type", task_type))
+        metadata = task_payload.get("metadata", metadata or {})
+        metadata = metadata if isinstance(metadata, dict) else {}
+        additional_steps = task_payload.get("additional_steps", [])
+        if not isinstance(additional_steps, list):
+            additional_steps = []
+
         self.logger.info(f"Task {task_id}: {task_type} — PENDING")
         if not self.agents:
             return {"error": f"No agent for task_type={task_type}"}
@@ -551,6 +570,14 @@ class TaskOrchestrator:
                 )
 
         enhanced_prompt = f"{context_prefix}{prompt}" if context_prefix else prompt
+        if additional_steps:
+            steps_lines = "\n".join(f"- {step}" for step in additional_steps)
+            enhanced_prompt = (
+                f"{enhanced_prompt}\n\nДополнительные шаги от плагинов:\n{steps_lines}"
+            )
+            metadata = dict(metadata)
+            metadata["plugin_additional_steps"] = additional_steps
+
         task = {
             "task_id": task_id,
             "prompt": enhanced_prompt,
@@ -572,6 +599,7 @@ class TaskOrchestrator:
             if self._result_has_error(result):
                 error_message = self._extract_error_message(result)
                 self.logger.warning("Task %s returned logical error: %s", task_id, error_message)
+                await self._run_error_hooks(task, RuntimeError(error_message))
                 self._record_failure(
                     task_id=task_id,
                     agent_type=agent.name,
@@ -591,6 +619,7 @@ class TaskOrchestrator:
                     )
                 return result
 
+            result = await self._run_post_task_hooks(task, result)
             if self.memory:
                 self.memory.add_step(
                     task_id,
@@ -615,6 +644,7 @@ class TaskOrchestrator:
             )
             self.logger.error("Task %s timeout for agent %s", task_id, agent.name)
             stack = traceback.format_exc()
+            await self._run_error_hooks(task, TimeoutError(error_message))
             self._record_failure(
                 task_id=task_id,
                 agent_type=agent.name,
@@ -636,6 +666,7 @@ class TaskOrchestrator:
         except Exception as e:
             self.logger.error(f"Task {task_id} failed: {e}")
             stack = traceback.format_exc()
+            await self._run_error_hooks(task, e)
             self._record_failure(
                 task_id=task_id,
                 agent_type=agent.name,
@@ -654,6 +685,34 @@ class TaskOrchestrator:
                     metadata={"task_type": task_type, "failed": True},
                 )
             return {"error": str(e)}
+
+    async def _run_pre_task_hooks(self, task_payload: Dict[str, Any]) -> Dict[str, Any]:
+        if self.plugin_hook_system is None:
+            return task_payload
+        try:
+            updated = await self.plugin_hook_system.pre_task_execution(task_payload)
+            return updated if isinstance(updated, dict) else task_payload
+        except Exception as exc:
+            self.logger.warning("pre_task_execution hook failed: %s", exc)
+            return task_payload
+
+    async def _run_post_task_hooks(self, task_payload: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
+        if self.plugin_hook_system is None:
+            return result
+        try:
+            updated = await self.plugin_hook_system.post_task_execution(task_payload, result)
+            return updated if isinstance(updated, dict) else result
+        except Exception as exc:
+            self.logger.warning("post_task_execution hook failed: %s", exc)
+            return result
+
+    async def _run_error_hooks(self, task_payload: Dict[str, Any], error: Exception) -> None:
+        if self.plugin_hook_system is None:
+            return
+        try:
+            await self.plugin_hook_system.on_error(task_payload, error)
+        except Exception as exc:
+            self.logger.warning("on_error hook failed: %s", exc)
 
     async def execute_multi_step_task(
         self,

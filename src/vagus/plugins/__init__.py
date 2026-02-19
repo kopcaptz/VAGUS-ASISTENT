@@ -13,6 +13,14 @@ from .core import (
 )
 from .hooks import HookSystem, SUPPORTED_HOOKS
 from .hot_reload import HotReloadConfig, HotReloadManager, WATCHDOG_AVAILABLE
+from .integration import (
+    CLIPluginIntegration,
+    DashboardPluginIntegration,
+    TelegramPluginIntegration,
+    get_cli_plugin_integration,
+    get_dashboard_plugin_integration,
+    get_telegram_plugin_integration,
+)
 from .loader import (
     DependencyVettingError,
     DependencyResolutionError,
@@ -29,6 +37,8 @@ from .loader import (
 from .marketplace import MarketplaceClient, create_marketplace_app
 from .monitoring import PluginHealthStatus, PluginMonitor, PluginRuntimeMetrics
 from .analytics import PluginAnalytics, PluginUsageMetrics
+from .lifecycle import PluginLifecycleManager, PluginLifecycleRecord, PluginLifecycleStage
+from .performance import PluginPerformanceOptimizer
 from .dependencies import (
     DependencyEdge,
     PluginDependencyNode,
@@ -36,6 +46,7 @@ from .dependencies import (
 )
 from .tools import PluginTemplateError, PluginTemplateGenerator, create_plugin_template
 from .backup import PluginBackupError, PluginBackupManager
+from .migration import MigrationStep, PluginMigrationError, PluginMigrationManager
 from .registry import PluginRegistry
 from .sandbox import (
     SandboxEngine,
@@ -48,6 +59,12 @@ from .sandbox import (
     SecurityViolationError,
 )
 from .security import PluginSignatureVerifier, SignatureError, TrustStore
+from .security import (
+    PluginResourceQuota,
+    PluginSecurityAuditRecord,
+    PluginSecurityHardening,
+    PluginSecurityHardeningError,
+)
 
 __all__ = [
     "PluginManifest",
@@ -73,6 +90,12 @@ __all__ = [
     "SecurePluginLoader",
     "HookSystem",
     "SUPPORTED_HOOKS",
+    "DashboardPluginIntegration",
+    "CLIPluginIntegration",
+    "TelegramPluginIntegration",
+    "get_dashboard_plugin_integration",
+    "get_cli_plugin_integration",
+    "get_telegram_plugin_integration",
     "HotReloadManager",
     "HotReloadConfig",
     "WATCHDOG_AVAILABLE",
@@ -90,6 +113,10 @@ __all__ = [
     "PluginMonitor",
     "PluginRuntimeMetrics",
     "PluginHealthStatus",
+    "PluginLifecycleManager",
+    "PluginLifecycleRecord",
+    "PluginLifecycleStage",
+    "PluginPerformanceOptimizer",
     "PluginAnalytics",
     "PluginUsageMetrics",
     "PluginDependencyResolver",
@@ -100,6 +127,13 @@ __all__ = [
     "create_plugin_template",
     "PluginBackupManager",
     "PluginBackupError",
+    "PluginMigrationManager",
+    "PluginMigrationError",
+    "MigrationStep",
+    "PluginSecurityHardening",
+    "PluginSecurityHardeningError",
+    "PluginResourceQuota",
+    "PluginSecurityAuditRecord",
     "MarketplaceClient",
     "create_marketplace_app",
 ]

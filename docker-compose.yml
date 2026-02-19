@@ -12,12 +12,44 @@ services:
     environment:
       - PYTHONPATH=/app/src
       - VAGUS_SECRET_KEY=${VAGUS_SECRET_KEY:-vagus-dev-secret}
+      - VAGUS_ENV=${VAGUS_ENV:-production}
+      - VAGUS_PLUGINS_ENABLED=true
+      - VAGUS_PLUGINS_REQUIRE_SIGNATURES=${VAGUS_PLUGINS_REQUIRE_SIGNATURES:-false}
+      - VAGUS_PLUGINS_MARKETPLACE_URL=http://marketplace:9000
     volumes:
       - ./configs:/app/configs:ro
       - api-data:/app/data
+    depends_on:
+      - marketplace
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  marketplace:
+    build:
+      context: .
+      target: api
+    command: [
+      "uvicorn",
+      "vagus.plugins.marketplace.api_server:create_marketplace_app",
+      "--factory",
+      "--host",
+      "0.0.0.0",
+      "--port",
+      "9000"
+    ]
+    ports:
+      - "9000:9000"
+    environment:
+      - PYTHONPATH=/app/src
+    volumes:
+      - marketplace-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:9000/health').raise_for_status()"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -32,6 +64,7 @@ services:
       - VAGUS_API_URL=http://api:8000
     depends_on:
       - api
+      - marketplace
     restart: unless-stopped
 
   telegram-bot:
@@ -50,5 +83,17 @@ services:
     profiles:
       - telegram
 
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - api
+      - marketplace
+    restart: unless-stopped
+
 volumes:
   api-data:
+  marketplace-data:

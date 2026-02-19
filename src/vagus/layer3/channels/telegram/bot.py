@@ -14,12 +14,14 @@ except ImportError:
 
 from ..gateway import ChannelGateway
 from .handlers import router as handlers_router, set_gateway
+from ....plugins.integration import get_telegram_plugin_integration
 
 
 async def start_telegram_bot(
     token: Optional[str] = None,
     api_url: Optional[str] = None,
     api_key: Optional[str] = None,
+    plugin_registry: Optional[object] = None,
 ):
     """
     Запуск Telegram-бота.
@@ -41,6 +43,16 @@ async def start_telegram_bot(
 
     gw = ChannelGateway(api_url=api_url, api_key=api_key)
     set_gateway(gw)
+    integration = get_telegram_plugin_integration()
+    if plugin_registry is not None and hasattr(plugin_registry, "list_plugins"):
+        for plugin in plugin_registry.list_plugins():
+            runtime = plugin.entry_point
+            if isinstance(runtime, type):
+                try:
+                    runtime = runtime()
+                except Exception:
+                    pass
+            integration.discover_from_plugin(plugin.name, runtime)
 
     bot = Bot(token=token)
     dp = Dispatcher()
