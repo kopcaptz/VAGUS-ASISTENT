@@ -1,5 +1,9 @@
 # Vagus Asistent - Layer 1
 pydantic>=2.0
+
+# Layer 3 - API
+fastapi>=0.100
+uvicorn>=0.22
 python-dotenv>=1.0
 pyyaml>=6.0
 
