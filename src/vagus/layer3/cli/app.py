@@ -8,6 +8,8 @@ except ImportError:
     typer = None  # type: ignore[assignment]
 
 from vagus.logging import generate_trace_id, logging_context
+from vagus.plugins.integration import get_cli_plugin_integration
+from vagus.plugins.registry import PluginRegistry
 
 from .utils.config import save_config
 from .utils.output import print_success
@@ -37,6 +39,19 @@ def create_app():
         app.add_typer(admin_app, name="admin", help="Администрирование")
     if plugin_app is not None:
         app.add_typer(plugin_app, name="plugin", help="Управление плагинами")
+
+    # Dynamic plugin CLI integration.
+    cli_integration = get_cli_plugin_integration()
+    cli_integration.discover_from_registry(PluginRegistry())
+    if plugin_app is not None:
+        cli_integration.attach_to_plugin_typer(plugin_app)
+    cli_integration.attach_namespace_subcommands(
+        {
+            "task": task_app,
+            "agent": agent_app,
+            "admin": admin_app,
+        }
+    )
 
     @app.command()
     def login(

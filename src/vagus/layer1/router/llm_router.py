@@ -3,7 +3,8 @@ LLMRouter — фасад системы, координация всех ком�
 """
 
 import time
-from typing import Dict, Any, Optional, AsyncGenerator
+import inspect
+from typing import TYPE_CHECKING, Dict, Any, Optional, AsyncGenerator
 from ..providers.base_provider import LLMProvider
 from ..providers.provider_factory import ProviderFactory
 from ..cache.cache_service import CacheService
@@ -16,6 +17,10 @@ from ..balancing.strategy_manager import StrategyManager
 from .request_handler import RequestHandler
 from .response_builder import ResponseBuilder
 from ...layer0.logging import get_logger
+
+if TYPE_CHECKING:
+    from ...plugins.hooks import HookSystem
+    from ...plugins.registry import PluginRegistry
 
 try:
     from ...layer3.api.metrics import (
@@ -68,12 +73,16 @@ class LLMRouter:
         http_max_connections: int = 100,
         http_max_keepalive_connections: int = 20,
         http_keepalive_expiry: float = 5.0,
+        plugin_hook_system: Optional["HookSystem"] = None,
+        plugin_registry: Optional["PluginRegistry"] = None,
     ):
         self.config_manager = config_manager
         self.enable_cache = enable_cache
         self.enable_budgeting = enable_budgeting
         self.enable_monitoring = enable_monitoring
         self.default_strategy_name = default_strategy
+        self.plugin_hook_system = plugin_hook_system
+        self.plugin_registry = plugin_registry
         self.logger = get_logger("router")
         self._initialized = False
 
@@ -140,6 +149,7 @@ class LLMRouter:
         if self._initialized:
             return
         providers_config = providers_config or {}
+        self._register_plugin_providers()
         for pid, pcfg in providers_config.items():
             if isinstance(pcfg, dict) and pcfg.get("enabled", True):
                 try:
@@ -159,6 +169,64 @@ class LLMRouter:
         self._initialized = True
         self.logger.info(f"LLMRouter initialized with {len(self._providers)} providers")
 
+    def register_plugin_provider(self, provider_id: str, provider_class: type[LLMProvider]) -> None:
+        """Registers custom provider class from plugin."""
+        self.provider_factory.registry.register(provider_id, provider_class)
+        self.logger.info("Plugin provider registered: %s", provider_id)
+
+    def _register_plugin_providers(self) -> None:
+        if self.plugin_registry is None:
+            return
+        try:
+            plugins = self.plugin_registry.list_plugins()
+        except Exception:
+            return
+
+        for plugin in plugins:
+            target = self._resolve_plugin_runtime_target(plugin)
+            providers: dict[str, type[LLMProvider]] = {}
+
+            providers_attr = getattr(target, "llm_providers", None)
+            if isinstance(providers_attr, dict):
+                providers.update(providers_attr)
+
+            getter = getattr(target, "get_llm_providers", None)
+            if callable(getter):
+                try:
+                    dynamic = getter()
+                    if isinstance(dynamic, dict):
+                        providers.update(dynamic)
+                except Exception as exc:
+                    self.logger.warning("Plugin provider getter failed for %s: %s", plugin.name, exc)
+
+            register_fn = getattr(target, "register_llm_providers", None)
+            if callable(register_fn):
+                try:
+                    register_fn(self.provider_factory.registry)
+                except Exception as exc:
+                    self.logger.warning("Plugin provider registrar failed for %s: %s", plugin.name, exc)
+
+            for provider_id, provider_class in providers.items():
+                try:
+                    self.register_plugin_provider(provider_id, provider_class)
+                except Exception as exc:
+                    self.logger.warning(
+                        "Failed to register plugin provider %s from %s: %s",
+                        provider_id,
+                        plugin.name,
+                        exc,
+                    )
+
+    @staticmethod
+    def _resolve_plugin_runtime_target(plugin: Any) -> Any:
+        entry_point = getattr(plugin, "entry_point", None)
+        if inspect.isclass(entry_point):
+            try:
+                return entry_point()
+            except Exception:
+                return entry_point
+        return entry_point or getattr(plugin, "module", None) or plugin
+
     async def route_request(
         self,
         prompt: str,
@@ -171,15 +239,41 @@ class LLMRouter:
         """
         Основной поток: кэш → бюджет → стратегия → fallback → кэш → метрики → бюджет.
         """
+        request_kwargs = dict(kwargs)
         req = self.request_handler.parse(
             prompt=prompt, stream=stream, priority=priority,
-            interactive=interactive, model=model, **kwargs
+            interactive=interactive, model=model, **request_kwargs
         )
+
+        call_context: Dict[str, Any] = {
+            "prompt": req.prompt,
+            "stream": stream,
+            "priority": priority,
+            "interactive": interactive,
+            "model": model,
+            "kwargs": dict(request_kwargs),
+        }
+        if self.plugin_hook_system is not None:
+            try:
+                updated_context = await self.plugin_hook_system.pre_llm_call(call_context)
+                if isinstance(updated_context, dict):
+                    call_context = updated_context
+                    req.prompt = str(updated_context.get("prompt", req.prompt))
+                    stream = bool(updated_context.get("stream", stream))
+                    priority = str(updated_context.get("priority", priority))
+                    interactive = bool(updated_context.get("interactive", interactive))
+                    model = updated_context.get("model", model)
+                    hook_kwargs = updated_context.get("kwargs", request_kwargs)
+                    if isinstance(hook_kwargs, dict):
+                        request_kwargs = hook_kwargs
+            except Exception as exc:
+                self.logger.warning("pre_llm_call hook failed: %s", exc)
+
         trace_id = MetricsStorage.generate_trace_id()
         cache_key_kw = {"model": model or "default", "priority": priority}
 
         if self.enable_cache:
-            cached = await self.cache.get(prompt, **cache_key_kw)
+            cached = await self.cache.get(req.prompt, **cache_key_kw)
             if cached is not None:
                 record_cache_hit()
                 self.logger.debug("Cache HIT")
@@ -225,7 +319,7 @@ class LLMRouter:
                 model=model or prov.model,
                 temperature=req.temperature,
                 max_tokens=req.max_tokens,
-                **kwargs,
+                **request_kwargs,
             )
             if stream:
                 chunks = []
@@ -258,6 +352,11 @@ class LLMRouter:
             self.logger.error(f"Request failed: {e}")
             record_llm_request(chain_ids[0], model or "unknown", "error")
             update_circuit_breaker_state_from_router(self)
+            if self.plugin_hook_system is not None:
+                try:
+                    await self.plugin_hook_system.on_llm_error(call_context, e)
+                except Exception as hook_exc:
+                    self.logger.warning("on_llm_error hook failed: %s", hook_exc)
             if self.enable_monitoring:
                 self.monitoring.record_complete_request(
                     trace_id=trace_id, provider=chain_ids[0], model=model or "unknown",
@@ -265,12 +364,36 @@ class LLMRouter:
                 )
             raise
 
+        response_payload: Dict[str, Any] = {
+            "provider": used_provider,
+            "model": model or "unknown",
+            "stream": stream,
+            "chunks": result if isinstance(result, list) else None,
+            "content": result if isinstance(result, str) else None,
+        }
+        if self.plugin_hook_system is not None:
+            try:
+                updated_response = await self.plugin_hook_system.post_llm_call(
+                    call_context,
+                    response_payload,
+                )
+                if isinstance(updated_response, dict):
+                    response_payload = updated_response
+                    if isinstance(response_payload.get("chunks"), list):
+                        result = response_payload.get("chunks")
+                    elif response_payload.get("content") is not None:
+                        result = str(response_payload.get("content"))
+            except Exception as exc:
+                self.logger.warning("post_llm_call hook failed: %s", exc)
+
         if stream and isinstance(result, list):
             for chunk in result:
                 yield chunk
             content_str = "".join(c.get("content", "") for c in result)
         else:
             content_str = result if isinstance(result, str) else str(result)
+            if stream:
+                yield self.response_builder.build_chunk(content_str, done=True)
         latency = (time.monotonic() - start_time) * 1000
         if used_provider and used_provider in self._providers:
             prov = self._providers[used_provider]
@@ -285,7 +408,7 @@ class LLMRouter:
         record_llm_request(used_provider or "unknown", model or "unknown", "success")
         update_circuit_breaker_state_from_router(self)
         if self.enable_cache and content_str:
-            await self.cache.set(prompt, content_str, **cache_key_kw)
+            await self.cache.set(req.prompt, content_str, **cache_key_kw)
         self._stats["requests"] = self._stats.get("requests", 0) + 1
         self._stats["total_cost"] = self._stats.get("total_cost", 0) + cost
 

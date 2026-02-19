@@ -94,3 +94,27 @@ def test_marketplace_api_returns_404_for_missing_plugin(tmp_path: Path):
     assert client.get("/plugins/missing").status_code == 404
     assert client.get("/plugins/missing/versions").status_code == 404
     assert client.get("/plugins/missing/download").status_code == 404
+
+
+def test_marketplace_api_health_endpoint(tmp_path: Path):
+    app = create_marketplace_app(db_path=tmp_path / "marketplace.db")
+    client = TestClient(app)
+    client.post("/plugins/upload", json=_upload_payload())
+
+    response = client.get("/health")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["plugins"] >= 1
+
+
+def test_marketplace_api_metrics_endpoint(tmp_path: Path):
+    app = create_marketplace_app(db_path=tmp_path / "marketplace.db")
+    client = TestClient(app)
+    client.post("/plugins/upload", json=_upload_payload())
+
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    body = response.text
+    assert "marketplace_plugins_total" in body
+    assert "marketplace_reviews_total" in body

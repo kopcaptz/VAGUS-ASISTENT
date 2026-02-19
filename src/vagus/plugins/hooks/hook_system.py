@@ -14,6 +14,9 @@ SUPPORTED_HOOKS = {
     "on_error",
     "on_message_received",
     "on_config_changed",
+    "pre_llm_call",
+    "post_llm_call",
+    "on_llm_error",
 }
 
 
@@ -123,6 +126,29 @@ class HookSystem:
             if updated_config is not None:
                 current_config = updated_config
         return current_config
+
+    async def pre_llm_call(self, call_context: Any) -> Any:
+        """Run hooks before LLM call; hooks may modify call context."""
+        current_context = call_context
+        for hook in self.get_hooks("pre_llm_call"):
+            updated_context = await self._invoke_hook(hook, current_context)
+            if updated_context is not None:
+                current_context = updated_context
+        return current_context
+
+    async def post_llm_call(self, call_context: Any, response: Any) -> Any:
+        """Run hooks after LLM call; hooks may transform response payload."""
+        current_response = response
+        for hook in self.get_hooks("post_llm_call"):
+            updated_response = await self._invoke_hook(hook, call_context, current_response)
+            if updated_response is not None:
+                current_response = updated_response
+        return current_response
+
+    async def on_llm_error(self, call_context: Any, error: Exception) -> None:
+        """Run hooks on LLM call failures."""
+        for hook in self.get_hooks("on_llm_error"):
+            await self._invoke_hook(hook, call_context, error)
 
     def _add_definition(self, definition: HookDefinition) -> None:
         with self._lock:

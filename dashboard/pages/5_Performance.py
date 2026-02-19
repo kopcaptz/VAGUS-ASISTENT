@@ -11,6 +11,7 @@ if STREAMLIT_AVAILABLE:
     from dashboard.utils.api_client import VagusAPIClient
     from dashboard.utils.auth import get_token, require_login
     from dashboard.utils.charts import append_history_snapshot, build_performance_snapshot
+    from vagus.plugins.integration import get_dashboard_plugin_integration
 
     require_login()
     st.title("Performance")
@@ -34,6 +35,28 @@ if STREAMLIT_AVAILABLE:
         col4, col5 = st.columns(2)
         col4.metric("Cache hit ratio", f"{snapshot['cache_hit_ratio_percent']:.2f}%")
         col5.metric("LLM provider costs", f"${snapshot['llm_provider_cost_usd']:.4f}")
+
+        st.markdown("---")
+        st.subheader("Plugin widgets")
+        integration = get_dashboard_plugin_integration()
+        widgets = integration.list_widgets(target_page="performance")
+        if widgets:
+            for widget in widgets:
+                try:
+                    widget_result = widget.render(snapshot=snapshot, history=history)
+                except TypeError:
+                    widget_result = widget.render(snapshot)
+                except Exception as exc:
+                    st.warning(f"Widget '{widget.name}' error: {exc}")
+                    continue
+
+                st.markdown(f"**{widget.name}** (`{widget.plugin_name}`)")
+                if isinstance(widget_result, dict):
+                    st.json(widget_result)
+                else:
+                    st.write(widget_result)
+        else:
+            st.info("Plugin widgets for Performance page are not registered.")
 
         st.markdown("---")
         st.subheader("24h trends")

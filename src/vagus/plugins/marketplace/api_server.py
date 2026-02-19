@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 
@@ -349,6 +349,26 @@ def create_marketplace_app(db_path: str | Path = ":memory:") -> FastAPI:
     def upload_plugin(payload: PluginUploadRequest) -> dict[str, Any]:
         plugin = database.upload_plugin(payload)
         return {"status": "uploaded", "plugin": plugin}
+
+    @app.get("/health")
+    def health() -> dict[str, Any]:
+        plugin_count = len(database.search_plugins(limit=1000))
+        return {"status": "ok", "plugins": plugin_count}
+
+    @app.get("/metrics")
+    def metrics() -> Response:
+        plugins = database.search_plugins(limit=1000)
+        plugin_count = len(plugins)
+        reviews_total = sum(int(item.get("review_count", 0)) for item in plugins)
+        payload = (
+            "# HELP marketplace_plugins_total Total number of marketplace plugins\n"
+            "# TYPE marketplace_plugins_total gauge\n"
+            f"marketplace_plugins_total {plugin_count}\n"
+            "# HELP marketplace_reviews_total Total number of plugin reviews\n"
+            "# TYPE marketplace_reviews_total gauge\n"
+            f"marketplace_reviews_total {reviews_total}\n"
+        )
+        return Response(content=payload, media_type="text/plain; version=0.0.4")
 
     app.state.marketplace_db = database
     return app

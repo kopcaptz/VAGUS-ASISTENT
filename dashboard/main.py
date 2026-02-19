@@ -13,6 +13,7 @@ except ImportError:
 if STREAMLIT_AVAILABLE:
     from dashboard.utils.api_client import VagusAPIClient
     from dashboard.utils.auth import is_logged_in, set_token
+    from vagus.plugins.integration import get_dashboard_plugin_integration
 
     st.set_page_config(
         page_title="Vagus Asistent",
@@ -24,6 +25,8 @@ if STREAMLIT_AVAILABLE:
 
     if is_logged_in():
         st.success("Вы авторизованы")
+        dashboard_integration = get_dashboard_plugin_integration()
+        plugin_pages = dashboard_integration.list_pages()
         st.markdown(
             "Используйте меню слева для навигации:\n"
             "- **Tasks** — создание и просмотр задач\n"
@@ -32,8 +35,13 @@ if STREAMLIT_AVAILABLE:
             "- **Settings** — настройки\n"
             "- **Performance** — realtime performance dashboard\n"
             "- **Circuit Breakers** — состояние и reset CB\n"
-            "- **Error Analytics** — классификация ошибок"
+            "- **Error Analytics** — классификация ошибок\n"
+            "- **Plugins** — управление плагинами"
         )
+        if plugin_pages:
+            st.markdown("### Plugin routes")
+            for page in plugin_pages:
+                st.write(f"- `{page.route}` — {page.title} ({page.plugin_name})")
     else:
         st.markdown("### Вход в систему")
         with st.form("login_form"):
