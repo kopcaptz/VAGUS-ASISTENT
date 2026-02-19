@@ -67,16 +67,54 @@ class LLMRouter:
         self.response_builder = ResponseBuilder()
 
         self._providers: Dict[str, LLMProvider] = {}
-        self._fallback_chain = FallbackChain(provider_ids=fallback_chain or ["openai", "anthropic", "deepseek"])
+        self._fallback_chain = FallbackChain(
+            provider_ids=fallback_chain or ["openai", "anthropic", "deepseek", "openrouter"]
+        )
         self._stats: Dict[str, Any] = {"providers_used": 0, "total_cost": 0.0, "requests": 0}
 
-    async def initialize(self, providers_config: Optional[Dict[str, Any]] = None) -> None:
+    @staticmethod
+    def _normalize_providers_config(providers_config: Optional[Any]) -> Dict[str, Dict[str, Any]]:
+        """
+        Приводит входную конфигурацию к словарю провайдеров.
+
+        Поддерживаются форматы:
+          - {"openai": {...}, ...}
+          - {"providers": {"openai": {...}, ...}}
+          - AppConfig (config.providers)
+        """
+        if providers_config is None:
+            return {}
+
+        if hasattr(providers_config, "providers"):
+            raw = getattr(providers_config, "providers")
+        elif isinstance(providers_config, dict) and "providers" in providers_config:
+            raw = providers_config.get("providers", {})
+        else:
+            raw = providers_config
+
+        if not hasattr(raw, "items"):
+            return {}
+
+        normalized: Dict[str, Dict[str, Any]] = {}
+        for pid, pcfg in raw.items():
+            if isinstance(pcfg, dict):
+                normalized[pid] = dict(pcfg)
+                continue
+            if hasattr(pcfg, "model_dump"):
+                cfg_dict = pcfg.model_dump()
+                api_key_obj = getattr(pcfg, "api_key", None)
+                if hasattr(api_key_obj, "get_secret_value"):
+                    cfg_dict["api_key"] = api_key_obj.get_secret_value()
+                normalized[pid] = cfg_dict
+        return normalized
+
+    async def initialize(self, providers_config: Optional[Any] = None) -> None:
         """
         Инициализация: загрузка провайдеров, стратегий, цепочек.
         """
         if self._initialized:
             return
-        providers_config = providers_config or {}
+        providers_config = self._normalize_providers_config(providers_config)
         for pid, pcfg in providers_config.items():
             if isinstance(pcfg, dict) and pcfg.get("enabled", True):
                 try:
@@ -86,9 +124,18 @@ class LLMRouter:
                 except Exception as e:
                     self.logger.warning(f"Failed to load provider {pid}: {e}")
         if not self._providers:
-            for pid in ["openai", "anthropic", "deepseek"]:
+            for pid in ["openai", "anthropic", "deepseek", "openrouter"]:
                 try:
-                    prov = self.provider_factory.create(pid, "gpt-4o-mini" if pid == "openai" else "claude-3-5-sonnet-20241022" if pid == "anthropic" else "deepseek-chat")
+                    default_model = (
+                        "gpt-4o-mini"
+                        if pid == "openai"
+                        else "claude-3-5-sonnet-20241022"
+                        if pid == "anthropic"
+                        else "deepseek-chat"
+                        if pid == "deepseek"
+                        else "openai/gpt-4o-mini"
+                    )
+                    prov = self.provider_factory.create(pid, default_model)
                     if prov.is_available():
                         self._providers[pid] = prov
                 except Exception as e:

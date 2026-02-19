@@ -20,7 +20,7 @@ def test_create_task_success(client, admin_headers):
     assert "task_id" in data
     assert data["status"] == "pending"
     assert "/api/v1/tasks/" in data["status_endpoint"]
-    assert "/ws/v1/tasks/" in data["stream_endpoint"]
+    assert "/api/v1/tasks/ws/" in data["stream_endpoint"]
 
 
 def test_create_task_unauthorized(client):

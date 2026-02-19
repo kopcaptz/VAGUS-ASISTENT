@@ -3,10 +3,20 @@ Pydantic модели конфигурации для Vagus Asistent.
 Основано на рекомендациях GPT.
 """
 
-from pydantic import BaseModel, Field, SecretStr, HttpUrl, validator, field_serializer
-from typing import Dict, List, Optional, Any
-from enum import Enum
 import re
+from enum import Enum
+from typing import Dict, List, Optional
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    SecretStr,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 
 class LogLevel(str, Enum):
@@ -26,21 +36,25 @@ class GlobalConfig(BaseModel):
     max_concurrent_requests: int = Field(default=10, ge=1, le=100, description="Максимум параллельных запросов")
     api_timeout: int = Field(default=30, ge=1, le=300, description="Таймаут API запросов в секундах")
     
-    @validator('workspace_path')
-    def validate_workspace_path(cls, v):
+    @field_validator("workspace_path")
+    @classmethod
+    def validate_workspace_path(cls, v: str) -> str:
         """Валидация пути к workspace."""
         import os
+
         if not os.path.isabs(v):
             from pathlib import Path
+
             project_root = Path(__file__).parent.parent.parent.parent
             v = str(project_root / v)
         return v
-    
-    @validator('default_model')
-    def validate_model_name(cls, v):
+
+    @field_validator("default_model")
+    @classmethod
+    def validate_model_name(cls, v: str) -> str:
         """Валидация имени модели."""
         if not v or len(v.strip()) < 2:
-            raise ValueError('Model name must be at least 2 characters')
+            raise ValueError("Model name must be at least 2 characters")
         return v.strip()
 
 
@@ -53,23 +67,19 @@ class ProviderConfig(BaseModel):
     enabled: bool = Field(default=True, description="Включен ли провайдер")
     models: List[str] = Field(default_factory=list, description="Доступные модели")
     
-    @validator('endpoint')
-    def validate_endpoint(cls, v):
+    @field_validator("endpoint")
+    @classmethod
+    def validate_endpoint(cls, v: HttpUrl) -> HttpUrl:
         """Валидация endpoint URL."""
         url_str = str(v)
-        if not url_str.startswith(('http://', 'https://')):
-            raise ValueError('Endpoint must start with http:// or https://')
+        if not url_str.startswith(("http://", "https://")):
+            raise ValueError("Endpoint must start with http:// or https://")
         return v
-    
-    @field_serializer('api_key')
+
+    @field_serializer("api_key")
     def serialize_api_key(self, api_key: SecretStr, _info):
         """Сериализация API ключа (маскирование)."""
         return "**********" if api_key else ""
-    
-    class Config:
-        json_encoders = {
-            SecretStr: lambda v: "**********" if v else ""
-        }
 
 
 class AgentConfig(BaseModel):
@@ -86,18 +96,20 @@ class AgentConfig(BaseModel):
     skills: List[str] = Field(default_factory=list, description="Список навыков агента")
     enabled: bool = Field(default=True, description="Включен ли агент")
     
-    @validator('temperature')
-    def validate_temperature(cls, v):
+    @field_validator("temperature")
+    @classmethod
+    def validate_temperature(cls, v: float) -> float:
         """Валидация температуры."""
         if v < 0.0 or v > 2.0:
-            raise ValueError('Temperature must be between 0.0 and 2.0')
+            raise ValueError("Temperature must be between 0.0 and 2.0")
         return round(v, 2)
-    
-    @validator('model')
-    def validate_model_reference(cls, v, values):
+
+    @field_validator("model")
+    @classmethod
+    def validate_model_reference(cls, v: str) -> str:
         """Валидация ссылки на модель."""
         if not v or len(v.strip()) < 2:
-            raise ValueError('Model reference must be at least 2 characters')
+            raise ValueError("Model reference must be at least 2 characters")
         return v.strip()
 
 
@@ -110,12 +122,13 @@ class SkillConfig(BaseModel):
     dependencies: List[str] = Field(default_factory=list, description="Зависимости навыка")
     category: Optional[str] = Field(None, description="Категория навыка")
     
-    @validator('version')
-    def validate_version(cls, v):
+    @field_validator("version")
+    @classmethod
+    def validate_version(cls, v: str) -> str:
         """Валидация версии (семантическое версионирование)."""
-        pattern = r'^\d+\.\d+\.\d+$'
+        pattern = r"^\d+\.\d+\.\d+$"
         if not re.match(pattern, v):
-            raise ValueError('Version must follow semantic versioning (e.g., 1.0.0)')
+            raise ValueError("Version must follow semantic versioning (e.g., 1.0.0)")
         return v
 
 
@@ -128,30 +141,23 @@ class AppConfig(BaseModel):
     agents: Dict[str, AgentConfig] = Field(default_factory=dict, description="Агенты")
     skills: Dict[str, SkillConfig] = Field(default_factory=dict, description="Навыки")
     
-    @validator('version')
-    def validate_version(cls, v):
+    @field_validator("version")
+    @classmethod
+    def validate_version(cls, v: int) -> int:
         """Валидация версии конфигурации."""
         if v < 1:
-            raise ValueError('Configuration version must be at least 1')
+            raise ValueError("Configuration version must be at least 1")
         return v
-    
-    @validator('agents')
-    def validate_agent_skills(cls, v, values):
+
+    @model_validator(mode="after")
+    def validate_agent_skills(self):
         """Валидация навыков агентов."""
-        if 'skills' not in values:
-            return v
-        
-        available_skills = set(values['skills'].keys())
-        
-        for agent_name, agent_config in v.items():
+        available_skills = set(self.skills.keys())
+
+        for agent_name, agent_config in self.agents.items():
             for skill in agent_config.skills:
                 if skill not in available_skills:
                     raise ValueError(f'Agent "{agent_name}" references unknown skill: {skill}')
-        
-        return v
-    
-    class Config:
-        allow_population_by_field_name = True
-        json_encoders = {
-            SecretStr: lambda v: "**********" if v else ""
-        }
+        return self
+
+    model_config = ConfigDict(populate_by_name=True)

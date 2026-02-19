@@ -79,7 +79,7 @@ def test_component_init():
 
     try:
         from vagus.layer1.fallback import CircuitBreaker, FallbackHandler
-        cb = CircuitBreaker("test", failure_threshold=3)
+        cb = CircuitBreaker(failure_threshold=3, recovery_timeout=60)
         print("OK: CircuitBreaker")
         results.append(True)
     except Exception as e:

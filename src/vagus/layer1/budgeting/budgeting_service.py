@@ -3,7 +3,7 @@
 Основано на реализации Manus AI.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Any
 import json
 from pathlib import Path
@@ -60,7 +60,7 @@ class BudgetingService:
             Ключ в формате 'YYYY-MM-DD'
         """
         if date is None:
-            date = datetime.utcnow()
+            date = datetime.now(timezone.utc)
         return date.strftime('%Y-%m-%d')
 
     def _month_key(self, date: Optional[datetime] = None) -> str:
@@ -74,7 +74,7 @@ class BudgetingService:
             Ключ в формате 'YYYY-MM'
         """
         if date is None:
-            date = datetime.utcnow()
+            date = datetime.now(timezone.utc)
         return date.strftime('%Y-%m')
 
     def _get_data_file(self) -> Path:
@@ -113,7 +113,7 @@ class BudgetingService:
             data = {
                 'daily_spent': self._daily_spent,
                 'monthly_spent': self._monthly_spent,
-                'last_updated': datetime.utcnow().isoformat()
+                'last_updated': datetime.now(timezone.utc).isoformat()
             }
             
             data_file = self._get_data_file()
@@ -127,7 +127,7 @@ class BudgetingService:
 
     def _cleanup_old_data(self) -> None:
         """Очищает старые данные (старше 60 дней)."""
-        cutoff_date = datetime.utcnow() - timedelta(days=60)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=60)
         cutoff_day_key = self._day_key(cutoff_date)
         cutoff_month_key = self._month_key(cutoff_date)
         
@@ -265,7 +265,7 @@ class BudgetingService:
             Словарь со статистикой
         """
         if date is None:
-            date = datetime.utcnow()
+            date = datetime.now(timezone.utc)
         
         day_key = self._day_key(date)
         month_key = self._month_key(date)

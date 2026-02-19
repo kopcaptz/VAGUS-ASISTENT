@@ -20,7 +20,8 @@ config_manager = ConfigManager()
 config = config_manager.get_config()
 kwargs = build_router_kwargs(config)
 router = LLMRouter(config_manager=config_manager, **kwargs)
-await router.initialize(config)
+providers_cfg = config.model_dump(by_alias=True).get("providers", {})
+await router.initialize(providers_cfg)
 ```
 
 ## Базовый запрос

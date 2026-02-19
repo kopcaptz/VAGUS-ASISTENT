@@ -50,7 +50,7 @@ def test_task_create_response():
     resp = TaskCreateResponse(
         task_id="abc-123",
         status_endpoint="/api/v1/tasks/abc-123",
-        stream_endpoint="/ws/v1/tasks/abc-123",
+        stream_endpoint="/api/v1/tasks/ws/abc-123",
     )
     assert resp.task_id == "abc-123"
     assert resp.status == TaskStatus.PENDING
