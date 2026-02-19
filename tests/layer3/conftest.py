@@ -9,9 +9,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
+from vagus.logging import StructuredLoggingMiddleware, configure_structured_logging
 from vagus.layer3.api.auth import create_access_token, create_refresh_token
 from vagus.layer3.api.audit.audit_trail import AuditTrail
-from vagus.layer3.api.main import create_app
+from vagus.layer3.api.health import HealthThresholds, health_router
+from vagus.layer3.api.metrics import HTTPMetricsMiddleware, metrics_router
 from vagus.layer3.api.routers.tasks import task_store
 from vagus.layer3.api.websocket_security import WebSocketAuditStorage, WebSocketRuntimeSettings
 
@@ -66,13 +68,18 @@ def app(tmp_path):
         tasks_router,
     )
 
+    configure_structured_logging(force=True)
     test_app = FastAPI(title="Vagus Asistent API", version="1.0.0")
     test_app.add_middleware(RateLimitMiddleware, max_requests=1000, window_seconds=60)
+    test_app.add_middleware(HTTPMetricsMiddleware)
+    test_app.add_middleware(StructuredLoggingMiddleware, component="api-test")
     test_app.include_router(auth_router, prefix="/api/v1")
     test_app.include_router(tasks_router, prefix="/api/v1")
     test_app.include_router(agents_router, prefix="/api/v1")
     test_app.include_router(status_router, prefix="/api/v1")
     test_app.include_router(admin_router, prefix="/api/v1")
+    test_app.include_router(metrics_router)
+    test_app.include_router(health_router)
 
     @test_app.get("/health")
     async def health():
@@ -82,7 +89,14 @@ def app(tmp_path):
     test_app.state.llm_router = _make_mock_llm_router()
     test_app.state.start_time = time.monotonic()
     test_app.state.websocket_settings = WebSocketRuntimeSettings()
-    test_app.state.security_settings = {"admin_ip_whitelist": []}
+    test_app.state.security_settings = {
+        "admin_ip_whitelist": [],
+        "audit_db_path": str(tmp_path / "audit_trail.db"),
+        "rate_limit": {"redis_url": None},
+        "rate_limit_redis_url": None,
+    }
+    test_app.state.secrets_settings = {"backend": "local"}
+    test_app.state.health_thresholds = HealthThresholds(disk_path=str(tmp_path))
     test_app.state.audit_trail = AuditTrail(str(tmp_path / "audit_trail.db"))
     test_app.state.websocket_audit_storage = WebSocketAuditStorage(
         str(tmp_path / "websocket_audit.db")

@@ -1,0 +1,26 @@
+rules:
+  high_error_rate_percent_5m: 5.0
+  high_latency_p95_seconds: 5.0
+  circuit_breaker_open_minutes: 5.0
+  disk_free_percent_min: 10.0
+
+channels:
+  telegram:
+    enabled: false
+    bot_token: ""
+    chat_id: ""
+
+  email:
+    enabled: false
+    smtp_host: ""
+    smtp_port: 587
+    username: ""
+    password: ""
+    from_email: ""
+    to_emails: []
+    use_tls: true
+
+  webhook:
+    enabled: false
+    url: ""
+    timeout_seconds: 5.0

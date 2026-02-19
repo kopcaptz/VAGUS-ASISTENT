@@ -13,10 +13,16 @@ from typing import Deque, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 
 from vagus.layer0.logging import get_logger
+from vagus.logging import generate_request_id, generate_trace_id, logging_context
 
 from ..audit.audit_trail import AuditTrail
 from ..auth import decode_access_token
 from ..dependencies import get_current_user, get_orchestrator
+from ..metrics import (
+    decrement_websocket_connections,
+    increment_websocket_connections,
+    record_task_execution,
+)
 from ..models import (
     TaskCreateRequest,
     TaskCreateResponse,
@@ -431,6 +437,7 @@ async def _run_task(task_id: str, request: TaskCreateRequest, orchestrator):
     """Фоновое выполнение задачи."""
     task_store[task_id]["status"] = TaskStatus.IN_PROGRESS
     task_store[task_id]["updated_at"] = datetime.now(timezone.utc)
+    agent_type = request.task_type or "unknown"
     try:
         result = await orchestrator.execute_task(
             task_id=task_id,
@@ -439,9 +446,15 @@ async def _run_task(task_id: str, request: TaskCreateRequest, orchestrator):
         )
         task_store[task_id]["status"] = TaskStatus.COMPLETED
         task_store[task_id]["result"] = result
+        if isinstance(result, dict):
+            metadata = result.get("metadata", {})
+            if isinstance(metadata, dict) and metadata.get("agent"):
+                agent_type = str(metadata.get("agent"))
+        record_task_execution(agent_type, "success")
     except Exception as e:
         task_store[task_id]["status"] = TaskStatus.FAILED
         task_store[task_id]["error"] = str(e)
+        record_task_execution(agent_type, "failed")
     finally:
         task_store[task_id]["updated_at"] = datetime.now(timezone.utc)
 
@@ -499,154 +512,177 @@ async def cancel_task(
 async def stream_task_result(websocket: WebSocket, task_id: str):
     """WebSocket для стриминга результата задачи с hardening-механизмами."""
     await websocket.accept()
-
-    started_at = time.monotonic()
-    state = _WebSocketConnectionState()
-    settings = _get_runtime_settings(websocket)
-    audit_storage = _get_audit_storage(websocket.app)
-    user_id: Optional[str] = None
-
-    token = _extract_bearer_token(websocket)
-    payload = decode_access_token(token) if token else None
-    if payload is None:
-        await _close_socket(
-            websocket,
-            state,
-            code=WS_CLOSE_POLICY_VIOLATION,
-            reason="Invalid token",
-        )
-        _log_audit(
-            audit_storage,
-            app=websocket.app,
-            event_type="close",
-            user_id=None,
-            task_id=task_id,
-            close_code=state.close_code,
-            reason=state.close_reason,
-            duration_seconds=time.monotonic() - started_at,
-        )
-        return
-
-    user_id = payload.get("sub", "unknown")
-    _log_audit(
-        audit_storage,
-        app=websocket.app,
-        event_type="connect",
-        user_id=user_id,
-        task_id=task_id,
-    )
-
-    heartbeat_task = asyncio.create_task(
-        _heartbeat_loop(
-            websocket,
-            state=state,
-            settings=settings,
-            audit_storage=audit_storage,
-            user_id=user_id,
-            task_id=task_id,
-        )
-    )
-    receive_task = asyncio.create_task(
-        _receive_loop(
-            websocket,
-            state=state,
-            settings=settings,
-            audit_storage=audit_storage,
-            user_id=user_id,
-            task_id=task_id,
-        )
-    )
-
+    increment_websocket_connections()
+    ws_trace_id = generate_trace_id()
+    ws_request_id = generate_request_id()
     try:
-        max_cycles = int(300 / settings.status_poll_interval_seconds)
-        for _ in range(max_cycles):
-            if state.closed:
-                break
+        with logging_context(
+            trace_id=ws_trace_id,
+            request_id=ws_request_id,
+            component="websocket",
+            agent_id=task_id,
+        ):
+            started_at = time.monotonic()
+            state = _WebSocketConnectionState()
+            settings = _get_runtime_settings(websocket)
+            audit_storage = _get_audit_storage(websocket.app)
+            user_id: Optional[str] = None
 
-            task = task_store.get(task_id)
-            if not task:
+            token = _extract_bearer_token(websocket)
+            payload = decode_access_token(token) if token else None
+            if payload is None:
                 await _close_socket(
                     websocket,
                     state,
-                    code=WS_CLOSE_NORMAL,
-                    reason="Task not found",
+                    code=WS_CLOSE_POLICY_VIOLATION,
+                    reason="Invalid token",
                 )
-                break
-
-            if task["status"] == TaskStatus.COMPLETED:
-                result = task.get("result", {})
-                content = result.get("content", str(result)) if isinstance(result, dict) else str(result)
-                await _send_json_with_audit(
-                    websocket,
-                    {"content": content, "done": True},
-                    audit_storage=audit_storage,
+                _log_audit(
+                    audit_storage,
                     app=websocket.app,
-                    user_id=user_id,
+                    event_type="close",
+                    user_id=None,
                     task_id=task_id,
-                    message_type="task_result",
+                    close_code=state.close_code,
+                    reason=state.close_reason,
+                    duration_seconds=time.monotonic() - started_at,
                 )
-                await _close_socket(
-                    websocket,
-                    state,
-                    code=WS_CLOSE_NORMAL,
-                    reason="Task completed",
-                )
-                break
-            if task["status"] == TaskStatus.FAILED:
-                await _close_socket(
-                    websocket,
-                    state,
-                    code=WS_CLOSE_INTERNAL_ERROR,
-                    reason="Task failed",
-                )
-                break
+                return
 
-            await _send_json_with_audit(
-                websocket,
-                {"content": None, "done": False},
-                audit_storage=audit_storage,
+            user_id = payload.get("sub", "unknown")
+            logger.info(
+                "WebSocket connection authorized",
+                extra={
+                    "trace_id": ws_trace_id,
+                    "user_id": user_id,
+                    "component": "websocket",
+                },
+            )
+            _log_audit(
+                audit_storage,
                 app=websocket.app,
+                event_type="connect",
                 user_id=user_id,
                 task_id=task_id,
-                message_type="task_status",
             )
-            await asyncio.sleep(settings.status_poll_interval_seconds)
 
-        if not state.closed:
-            await _close_socket(
-                websocket,
-                state,
-                code=WS_CLOSE_NORMAL,
-                reason="Stream timeout",
+            heartbeat_task = asyncio.create_task(
+                _heartbeat_loop(
+                    websocket,
+                    state=state,
+                    settings=settings,
+                    audit_storage=audit_storage,
+                    user_id=user_id,
+                    task_id=task_id,
+                )
             )
-    except WebSocketDisconnect:
-        state.closed = True
-        state.close_code = WS_CLOSE_NORMAL if state.close_code is None else state.close_code
-        state.close_reason = state.close_reason or "Client disconnected"
-    except Exception as exc:
-        logger.exception("WebSocket internal error for task_id=%s: %s", task_id, exc)
-        if not state.closed:
-            await _close_socket(
-                websocket,
-                state,
-                code=WS_CLOSE_INTERNAL_ERROR,
-                reason="Internal server error",
+            receive_task = asyncio.create_task(
+                _receive_loop(
+                    websocket,
+                    state=state,
+                    settings=settings,
+                    audit_storage=audit_storage,
+                    user_id=user_id,
+                    task_id=task_id,
+                )
             )
+
+            try:
+                max_cycles = int(300 / settings.status_poll_interval_seconds)
+                for _ in range(max_cycles):
+                    if state.closed:
+                        break
+
+                    task = task_store.get(task_id)
+                    if not task:
+                        await _close_socket(
+                            websocket,
+                            state,
+                            code=WS_CLOSE_NORMAL,
+                            reason="Task not found",
+                        )
+                        break
+
+                    if task["status"] == TaskStatus.COMPLETED:
+                        result = task.get("result", {})
+                        content = (
+                            result.get("content", str(result))
+                            if isinstance(result, dict)
+                            else str(result)
+                        )
+                        await _send_json_with_audit(
+                            websocket,
+                            {"content": content, "done": True},
+                            audit_storage=audit_storage,
+                            app=websocket.app,
+                            user_id=user_id,
+                            task_id=task_id,
+                            message_type="task_result",
+                        )
+                        await _close_socket(
+                            websocket,
+                            state,
+                            code=WS_CLOSE_NORMAL,
+                            reason="Task completed",
+                        )
+                        break
+                    if task["status"] == TaskStatus.FAILED:
+                        await _close_socket(
+                            websocket,
+                            state,
+                            code=WS_CLOSE_INTERNAL_ERROR,
+                            reason="Task failed",
+                        )
+                        break
+
+                    await _send_json_with_audit(
+                        websocket,
+                        {"content": None, "done": False},
+                        audit_storage=audit_storage,
+                        app=websocket.app,
+                        user_id=user_id,
+                        task_id=task_id,
+                        message_type="task_status",
+                    )
+                    await asyncio.sleep(settings.status_poll_interval_seconds)
+
+                if not state.closed:
+                    await _close_socket(
+                        websocket,
+                        state,
+                        code=WS_CLOSE_NORMAL,
+                        reason="Stream timeout",
+                    )
+            except WebSocketDisconnect:
+                state.closed = True
+                state.close_code = WS_CLOSE_NORMAL if state.close_code is None else state.close_code
+                state.close_reason = state.close_reason or "Client disconnected"
+            except Exception as exc:
+                logger.exception("WebSocket internal error for task_id=%s: %s", task_id, exc)
+                if not state.closed:
+                    await _close_socket(
+                        websocket,
+                        state,
+                        code=WS_CLOSE_INTERNAL_ERROR,
+                        reason="Internal server error",
+                    )
+            finally:
+                heartbeat_task.cancel()
+                receive_task.cancel()
+                await asyncio.gather(heartbeat_task, receive_task, return_exceptions=True)
+
+                _log_audit(
+                    audit_storage,
+                    app=websocket.app,
+                    event_type="close",
+                    user_id=user_id,
+                    task_id=task_id,
+                    close_code=state.close_code,
+                    reason=state.close_reason,
+                    duration_seconds=time.monotonic() - started_at,
+                )
     finally:
-        heartbeat_task.cancel()
-        receive_task.cancel()
-        await asyncio.gather(heartbeat_task, receive_task, return_exceptions=True)
-
-        _log_audit(
-            audit_storage,
-            app=websocket.app,
-            event_type="close",
-            user_id=user_id,
-            task_id=task_id,
-            close_code=state.close_code,
-            reason=state.close_reason,
-            duration_seconds=time.monotonic() - started_at,
-        )
+        decrement_websocket_connections()
 
 
 @router.get("/ws/audit-log", response_model=list[WebSocketAuditLogEntry])
