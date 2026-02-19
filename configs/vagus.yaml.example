@@ -61,6 +61,10 @@ providers:
     models: [deepseek-chat]
 
 layer1:
+  http:
+    max_connections: 100
+    max_keepalive_connections: 20
+    keepalive_expiry: 5.0
   router:
     enable_cache: true
     enable_budgeting: true
@@ -69,6 +73,14 @@ layer1:
   cache:
     ttl_seconds: 3600
     max_size_mb: 100
+    secondary:
+      enabled: true
+      redis_url: redis://localhost:6379/0
+      sqlite_fallback_path: cache_fallback.db
+      llm_responses_ttl_seconds: 3600
+      provider_health_ttl_seconds: 120
+      rate_limit_counter_ttl_seconds: 60
+      session_data_ttl_seconds: 3600
   budgeting:
     daily_limit_usd: 10.0
     monthly_limit_usd: 200.0
@@ -90,7 +102,27 @@ task_timeouts:
   coder: 600
   analyst: 180
 
+layer2:
+  cluster:
+    enabled: false
+    node_id: node-local
+    stateless_agents: true
+    shared_task_queue:
+      enabled: false
+      redis_url: redis://localhost:6379/0
+      queue_name: vagus:cluster:tasks
+    distributed_locking:
+      enabled: false
+      redis_url: redis://localhost:6379/0
+      lock_ttl_seconds: 900
+
 monitoring:
+  memory_profiler:
+    enabled: true
+    interval_seconds: 30
+    history_limit: 1024
+    leak_threshold_mb: 100.0
+    leak_window_seconds: 300
   health:
     thresholds:
       disk_free_percent_min: 10.0

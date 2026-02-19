@@ -4,7 +4,9 @@ State Machine: PENDING -> IN_PROGRESS -> COMPLETED
 """
 
 import asyncio
+import json
 import traceback
+import uuid
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -18,6 +20,105 @@ if TYPE_CHECKING:
     from .memory.episodic import EpisodicMemory
     from .memory.semantic import SemanticMemory
     from ..monitoring.error_analytics import ErrorAnalyticsStorage
+
+
+class _InMemorySharedTaskQueue:
+    """In-process fallback queue for task distribution."""
+
+    def __init__(self):
+        self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+    async def enqueue(self, payload: dict[str, Any]) -> None:
+        await self._queue.put(payload)
+
+    async def dequeue(self, timeout_seconds: float = 1.0) -> Optional[dict[str, Any]]:
+        try:
+            return await asyncio.wait_for(self._queue.get(), timeout=max(0.1, timeout_seconds))
+        except asyncio.TimeoutError:
+            return None
+
+    def get_stats(self) -> dict[str, Any]:
+        return {"backend": "memory", "queue_size": self._queue.qsize()}
+
+
+class _RedisSharedTaskQueue:
+    """Redis-backed shared queue for horizontal scaling."""
+
+    def __init__(self, redis_url: str, queue_name: str):
+        try:
+            import redis.asyncio as redis  # type: ignore[import-untyped]
+        except Exception as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError("redis package is not available") from exc
+        self._redis = redis.from_url(redis_url, decode_responses=True)
+        self._queue_name = queue_name
+        self._redis_url = redis_url
+
+    async def enqueue(self, payload: dict[str, Any]) -> None:
+        await self._redis.rpush(self._queue_name, json.dumps(payload, ensure_ascii=False, default=str))
+
+    async def dequeue(self, timeout_seconds: float = 1.0) -> Optional[dict[str, Any]]:
+        timeout = max(1, int(timeout_seconds))
+        item = await self._redis.blpop(self._queue_name, timeout=timeout)
+        if not item:
+            return None
+        _, raw_payload = item
+        try:
+            decoded = json.loads(raw_payload)
+        except json.JSONDecodeError:
+            return {"raw_payload": raw_payload}
+        return decoded if isinstance(decoded, dict) else {"payload": decoded}
+
+    def get_stats(self) -> dict[str, Any]:
+        return {"backend": "redis", "queue_name": self._queue_name, "redis_url": self._redis_url}
+
+
+class _RedisDistributedLock:
+    """Simple distributed lock using Redis SET NX EX."""
+
+    def __init__(self, redis_url: str, *, lock_prefix: str = "vagus:lock"):
+        try:
+            import redis.asyncio as redis  # type: ignore[import-untyped]
+        except Exception as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError("redis package is not available") from exc
+        self._redis = redis.from_url(redis_url, decode_responses=True)
+        self._lock_prefix = lock_prefix
+        self._owned_tokens: dict[str, str] = {}
+        self._redis_url = redis_url
+
+    def _key(self, resource_id: str) -> str:
+        return f"{self._lock_prefix}:{resource_id}"
+
+    async def acquire(self, resource_id: str, ttl_seconds: int) -> bool:
+        lock_key = self._key(resource_id)
+        token = str(uuid.uuid4())
+        acquired = await self._redis.set(lock_key, token, nx=True, ex=max(1, int(ttl_seconds)))
+        if acquired:
+            self._owned_tokens[resource_id] = token
+            return True
+        return False
+
+    async def release(self, resource_id: str) -> bool:
+        lock_key = self._key(resource_id)
+        token = self._owned_tokens.get(resource_id)
+        if not token:
+            return False
+        script = """
+        if redis.call("get", KEYS[1]) == ARGV[1] then
+            return redis.call("del", KEYS[1])
+        else
+            return 0
+        end
+        """
+        result = await self._redis.eval(script, 1, lock_key, token)
+        self._owned_tokens.pop(resource_id, None)
+        return bool(result)
+
+    def get_stats(self) -> dict[str, Any]:
+        return {
+            "backend": "redis",
+            "redis_url": self._redis_url,
+            "owned_locks": len(self._owned_tokens),
+        }
 
 
 class TaskStatus(str, Enum):
@@ -44,6 +145,7 @@ class TaskOrchestrator:
         task_timeouts: Optional[Dict[str, float]] = None,
         skill_system: Optional[SkillSystem] = None,
         error_analytics: Optional["ErrorAnalyticsStorage"] = None,
+        cluster_config: Optional[Dict[str, Any]] = None,
     ):
         """
         Args:
@@ -61,6 +163,141 @@ class TaskOrchestrator:
         self.error_analytics = error_analytics
         self.logger = get_logger("layer2.orchestrator")
         self.task_timeouts = self._normalize_task_timeouts(task_timeouts)
+        self.cluster_config = self._normalize_cluster_config(cluster_config)
+        self.node_id = str(self.cluster_config.get("node_id"))
+        self.stateless_agents = bool(self.cluster_config.get("stateless_agents", True))
+        self._shared_task_queue = self._init_shared_task_queue(self.cluster_config)
+        self._distributed_lock = self._init_distributed_lock(self.cluster_config)
+        self.logger.info(
+            "Orchestrator scalability: node_id=%s stateless=%s queue=%s lock=%s",
+            self.node_id,
+            self.stateless_agents,
+            self._shared_task_queue.get_stats().get("backend"),
+            (
+                self._distributed_lock.get_stats().get("backend")
+                if self._distributed_lock is not None
+                else "disabled"
+            ),
+        )
+
+    @staticmethod
+    def _normalize_cluster_config(cluster_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        defaults: Dict[str, Any] = {
+            "enabled": False,
+            "node_id": "node-local",
+            "stateless_agents": True,
+            "shared_task_queue": {
+                "enabled": False,
+                "redis_url": None,
+                "queue_name": "vagus:cluster:tasks",
+            },
+            "distributed_locking": {
+                "enabled": False,
+                "redis_url": None,
+                "lock_ttl_seconds": 900,
+            },
+        }
+        if not isinstance(cluster_config, dict):
+            return defaults
+
+        normalized = dict(defaults)
+        normalized.update(
+            {
+                "enabled": bool(cluster_config.get("enabled", defaults["enabled"])),
+                "node_id": str(cluster_config.get("node_id", defaults["node_id"])),
+                "stateless_agents": bool(
+                    cluster_config.get("stateless_agents", defaults["stateless_agents"])
+                ),
+            }
+        )
+
+        queue_cfg = cluster_config.get("shared_task_queue", {})
+        if isinstance(queue_cfg, dict):
+            merged_queue_cfg = dict(defaults["shared_task_queue"])
+            merged_queue_cfg.update(queue_cfg)
+            normalized["shared_task_queue"] = merged_queue_cfg
+
+        lock_cfg = cluster_config.get("distributed_locking", {})
+        if isinstance(lock_cfg, dict):
+            merged_lock_cfg = dict(defaults["distributed_locking"])
+            merged_lock_cfg.update(lock_cfg)
+            normalized["distributed_locking"] = merged_lock_cfg
+        return normalized
+
+    def _init_shared_task_queue(self, cluster_config: Dict[str, Any]):
+        queue_cfg = cluster_config.get("shared_task_queue", {})
+        if not isinstance(queue_cfg, dict):
+            return _InMemorySharedTaskQueue()
+        if not bool(queue_cfg.get("enabled", False)):
+            return _InMemorySharedTaskQueue()
+        redis_url = queue_cfg.get("redis_url")
+        queue_name = str(queue_cfg.get("queue_name", "vagus:cluster:tasks"))
+        if not redis_url:
+            self.logger.warning("Shared queue enabled without redis_url; fallback to in-memory queue")
+            return _InMemorySharedTaskQueue()
+        try:
+            return _RedisSharedTaskQueue(str(redis_url), queue_name)
+        except Exception as exc:
+            self.logger.warning("Failed to initialize Redis shared queue, fallback to memory: %s", exc)
+            return _InMemorySharedTaskQueue()
+
+    def _init_distributed_lock(self, cluster_config: Dict[str, Any]):
+        lock_cfg = cluster_config.get("distributed_locking", {})
+        if not isinstance(lock_cfg, dict) or not bool(lock_cfg.get("enabled", False)):
+            return None
+        redis_url = lock_cfg.get("redis_url")
+        if not redis_url:
+            self.logger.warning("Distributed locking enabled without redis_url; locking disabled")
+            return None
+        try:
+            return _RedisDistributedLock(str(redis_url))
+        except Exception as exc:
+            self.logger.warning("Failed to initialize Redis distributed lock: %s", exc)
+            return None
+
+    def get_scalability_stats(self) -> Dict[str, Any]:
+        lock_stats = self._distributed_lock.get_stats() if self._distributed_lock is not None else {
+            "backend": "disabled"
+        }
+        return {
+            "cluster_enabled": bool(self.cluster_config.get("enabled", False)),
+            "node_id": self.node_id,
+            "stateless_agents": self.stateless_agents,
+            "shared_task_queue": self._shared_task_queue.get_stats(),
+            "distributed_locking": lock_stats,
+        }
+
+    async def enqueue_task_for_cluster(self, payload: Dict[str, Any]) -> None:
+        """Публикует задачу в shared queue для горизонтального scaling."""
+        if not isinstance(payload, dict):
+            raise ValueError("payload must be a dict")
+        await self._shared_task_queue.enqueue(payload)
+
+    async def dequeue_task_for_cluster(self, timeout_seconds: float = 1.0) -> Optional[Dict[str, Any]]:
+        """Забирает задачу из shared queue для обработки текущим node."""
+        return await self._shared_task_queue.dequeue(timeout_seconds=timeout_seconds)
+
+    async def _execute_with_distributed_lock(
+        self,
+        *,
+        task_id: str,
+        timeout_seconds: float,
+        coroutine_factory,
+    ):
+        if self._distributed_lock is None:
+            return await coroutine_factory()
+
+        lock_cfg = self.cluster_config.get("distributed_locking", {})
+        lock_ttl_seconds = int(lock_cfg.get("lock_ttl_seconds", 900))
+        lock_ttl_seconds = max(lock_ttl_seconds, int(timeout_seconds) + 30)
+
+        acquired = await self._distributed_lock.acquire(task_id, lock_ttl_seconds)
+        if not acquired:
+            raise RuntimeError(f"Task {task_id} is already being processed by another node")
+        try:
+            return await coroutine_factory()
+        finally:
+            await self._distributed_lock.release(task_id)
 
     @staticmethod
     def _normalize_task_timeouts(
@@ -323,7 +560,14 @@ class TaskOrchestrator:
 
         try:
             timeout_seconds = self._resolve_timeout_seconds(task_type=task_type, agent=agent)
-            result = await asyncio.wait_for(agent.process(task), timeout=timeout_seconds)
+            result = await self._execute_with_distributed_lock(
+                task_id=task_id,
+                timeout_seconds=timeout_seconds,
+                coroutine_factory=lambda: asyncio.wait_for(
+                    agent.process(task),
+                    timeout=timeout_seconds,
+                ),
+            )
 
             if self._result_has_error(result):
                 error_message = self._extract_error_message(result)
@@ -509,9 +753,13 @@ class TaskOrchestrator:
 
             try:
                 timeout_seconds = self._resolve_timeout_seconds(task_type=step_type, agent=agent)
-                result = await asyncio.wait_for(
-                    agent.process(task, context=context),
-                    timeout=timeout_seconds,
+                result = await self._execute_with_distributed_lock(
+                    task_id=step_task_id,
+                    timeout_seconds=timeout_seconds,
+                    coroutine_factory=lambda: asyncio.wait_for(
+                        agent.process(task, context=context),
+                        timeout=timeout_seconds,
+                    ),
                 )
                 steps_results.append(result)
 

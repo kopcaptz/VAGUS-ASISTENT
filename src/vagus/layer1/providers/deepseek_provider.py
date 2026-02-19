@@ -42,17 +42,29 @@ class DeepSeekProvider(LLMProvider):
     ):
         super().__init__(name=name, model=model, api_key=api_key, timeout=timeout, **kwargs)
         self.base_url = base_url or self.DEFAULT_BASE_URL
+        self._client = None
         if not DEEPSEEK_AVAILABLE:
             self.logger.warning("openai package required for DeepSeek. pip install openai")
 
     def _get_client(self):
         if not DEEPSEEK_AVAILABLE:
             raise RuntimeError("openai package not installed")
-        return AsyncOpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url,
-            timeout=self.timeout,
-        )
+        if self._client is not None:
+            return self._client
+        try:
+            self._client = AsyncOpenAI(
+                api_key=self.api_key,
+                base_url=self.base_url,
+                timeout=self.timeout,
+                http_client=self.get_shared_http_client(),
+            )
+        except TypeError:
+            self._client = AsyncOpenAI(
+                api_key=self.api_key,
+                base_url=self.base_url,
+                timeout=self.timeout,
+            )
+        return self._client
 
     async def request(
         self,

@@ -40,10 +40,18 @@ def build_router_kwargs(config: Any) -> Dict[str, Any]:
     layer1 = get_layer1_config(config)
     router_cfg = layer1.get("router", {})
     cache_cfg = layer1.get("cache", {})
+    if not isinstance(cache_cfg, dict):
+        cache_cfg = {}
+    secondary_cache_cfg = cache_cfg.get("secondary", {})
+    if not isinstance(secondary_cache_cfg, dict):
+        secondary_cache_cfg = {}
     budget_cfg = layer1.get("budgeting", {})
     mon_cfg = layer1.get("monitoring", {})
     fallback_cfg = layer1.get("fallback", {})
     cb_cfg = fallback_cfg.get("circuit_breaker", {})
+    http_cfg = layer1.get("http", {})
+    if not isinstance(http_cfg, dict):
+        http_cfg = {}
     retry_cfg = layer1.get("retry", {})
     if not isinstance(retry_cfg, dict):
         retry_cfg = {}
@@ -64,6 +72,18 @@ def build_router_kwargs(config: Any) -> Dict[str, Any]:
         "default_strategy": router_cfg.get("default_strategy", "hybrid"),
         "cache_ttl": cache_cfg.get("ttl_seconds", 3600),
         "cache_max_mb": cache_cfg.get("max_size_mb", 100),
+        "cache_secondary_enabled": secondary_cache_cfg.get("enabled", False),
+        "cache_secondary_redis_url": secondary_cache_cfg.get("redis_url"),
+        "cache_secondary_sqlite_path": secondary_cache_cfg.get(
+            "sqlite_fallback_path",
+            "cache_fallback.db",
+        ),
+        "cache_secondary_namespace_ttls": {
+            "llm_response": secondary_cache_cfg.get("llm_responses_ttl_seconds", 3600),
+            "provider_health": secondary_cache_cfg.get("provider_health_ttl_seconds", 120),
+            "rate_limit_counter": secondary_cache_cfg.get("rate_limit_counter_ttl_seconds", 60),
+            "session_data": secondary_cache_cfg.get("session_data_ttl_seconds", 3600),
+        },
         "budget_daily": budget_cfg.get("daily_limit_usd", 10.0),
         "budget_monthly": budget_cfg.get("monthly_limit_usd", 200.0),
         "monitoring_db": mon_cfg.get("db_path", "metrics.db"),
@@ -77,4 +97,7 @@ def build_router_kwargs(config: Any) -> Dict[str, Any]:
             "retryable_errors",
             ["timeout", "rate_limit", "network_error"],
         ),
+        "http_max_connections": http_cfg.get("max_connections", 100),
+        "http_max_keepalive_connections": http_cfg.get("max_keepalive_connections", 20),
+        "http_keepalive_expiry": http_cfg.get("keepalive_expiry", 5.0),
     }

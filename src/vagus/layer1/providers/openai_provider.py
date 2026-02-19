@@ -46,13 +46,31 @@ class OpenAIProvider(LLMProvider):
     ):
         super().__init__(name=name, model=model, api_key=api_key, timeout=timeout, **kwargs)
         self.base_url = base_url
+        self._client = None
         if not OPENAI_AVAILABLE:
             self.logger.warning("openai package not installed. Install with: pip install openai")
 
     def _get_client(self):
         if not OPENAI_AVAILABLE:
             raise RuntimeError("openai package not installed")
-        return AsyncOpenAI(api_key=self.api_key, timeout=self.timeout, base_url=self.base_url)
+        if self._client is not None:
+            return self._client
+
+        client_kwargs = {
+            "api_key": self.api_key,
+            "timeout": self.timeout,
+            "base_url": self.base_url,
+        }
+        # OpenAI SDK поддерживает кастомный httpx.AsyncClient.
+        # Если версия SDK не поддерживает аргумент http_client, откатываемся gracefully.
+        try:
+            self._client = AsyncOpenAI(
+                http_client=self.get_shared_http_client(),
+                **client_kwargs,
+            )
+        except TypeError:
+            self._client = AsyncOpenAI(**client_kwargs)
+        return self._client
 
     async def request(
         self,

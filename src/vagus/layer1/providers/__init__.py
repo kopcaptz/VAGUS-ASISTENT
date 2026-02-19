@@ -2,6 +2,7 @@
 Модуль провайдеров LLM.
 """
 
+from .base import HTTPClientManager, HTTPClientPoolConfig
 from .base_provider import LLMProvider, LLMRequest, LLMResponse
 from .provider_registry import ProviderRegistry
 from .provider_factory import ProviderFactory
@@ -23,6 +24,8 @@ _default_registry.register("google", GoogleProvider)
 BaseProvider = LLMProvider
 
 __all__ = [
+    "HTTPClientManager",
+    "HTTPClientPoolConfig",
     "LLMProvider",
     "BaseProvider",
     "LLMRequest",
