@@ -1,19 +1,37 @@
-# Vagus Asistent - Layer 1
+# Vagus Asistent - Core
 pydantic>=2.0
 python-dotenv>=1.0
 pyyaml>=6.0
 
-# LLM провайдеры (опционально, для работы с API)
-# pip install openai anthropic  # для OpenAI, Anthropic, DeepSeek, OpenRouter
-# pip install google-generativeai  # для Google Gemini
+# Layer 3: REST API (FastAPI)
+fastapi>=0.109
+uvicorn[standard]>=0.27
+python-jose[cryptography]>=3.3
+passlib[bcrypt]>=1.7
+python-multipart>=0.0.6
 
-# Hot-reload конфигурации (опционально)
-# pip install watchdog
+# Layer 3: CLI
+typer>=0.9
+rich>=13.0
 
-# Тестирование
+# Layer 3: HTTP client (CLI, Dashboard, Channel Gateway)
+httpx>=0.26
+
+# Layer 3: Telegram bot
+aiogram>=3.0
+
+# Layer 3: Web Dashboard
+streamlit>=1.30
+
+# Testing
 pytest>=7.0
 pytest-asyncio>=0.21
 
-# Layer 2 Semantic Memory (опционально, для prod-эмбеддингов)
-# pip install chromadb  # ChromaDB для персистентного векторного хранилища
-# pip install sentence-transformers  # для качественных эмбеддингов
+# LLM providers (optional)
+# pip install openai anthropic google-generativeai
+
+# Hot-reload (optional)
+# pip install watchdog
+
+# Layer 2 Semantic Memory (optional)
+# pip install chromadb sentence-transformers
