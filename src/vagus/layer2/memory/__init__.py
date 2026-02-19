@@ -3,4 +3,6 @@
 Реализация — Неделя 3-5.
 """
 
-__all__: list[str] = []
+from .episodic import EpisodicMemory
+
+__all__: list[str] = ["EpisodicMemory"]
