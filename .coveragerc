@@ -1,0 +1,10 @@
+[run]
+omit =
+    src/vagus/__main__.py
+    src/vagus/layer1/providers/*
+    src/vagus/layer1/integration/*
+    src/vagus/layer3/channels/*
+
+[report]
+skip_covered = False
+show_missing = True

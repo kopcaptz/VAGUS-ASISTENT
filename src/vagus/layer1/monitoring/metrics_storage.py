@@ -5,7 +5,7 @@ SQLite хранилище метрик для мониторинга запро�
 import sqlite3
 import uuid
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 from ...layer0.logging import get_logger
 
@@ -89,7 +89,7 @@ class MetricsStorage:
                     cost_usd,
                     1 if success else 0,
                     error_type,
-                    datetime.utcnow().isoformat(),
+                    datetime.now(timezone.utc).isoformat(),
                 ),
             )
         self.logger.debug(f"Metric recorded: trace_id={trace_id[:8]}..., provider={provider}")
@@ -112,7 +112,7 @@ class MetricsStorage:
         conditions = []
         params: List[Any] = []
         if retention_days:
-            cutoff_dt = datetime.utcnow() - timedelta(days=retention_days)
+            cutoff_dt = datetime.now(timezone.utc) - timedelta(days=retention_days)
             conditions.append("timestamp >= ?")
             params.append(cutoff_dt.isoformat())
         if provider:
@@ -162,7 +162,7 @@ class MetricsStorage:
         Returns:
             Количество удалённых записей
         """
-        cutoff = datetime.utcnow() - timedelta(days=retention_days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
                 "DELETE FROM request_metrics WHERE timestamp < ?",

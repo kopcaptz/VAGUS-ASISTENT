@@ -49,6 +49,14 @@ curl -X POST http://localhost:8000/api/v1/auth/token \
   -d '{"username": "admin", "password": "admin"}'
 ```
 
+### WebSocket-стриминг с JWT
+
+Для WebSocket-стриминга требуется access token в query string:
+
+```text
+ws://localhost:8000/api/v1/tasks/ws/<task_id>?token=<access_token>
+```
+
 ## 4. Запуск Dashboard (Streamlit)
 
 ```bash

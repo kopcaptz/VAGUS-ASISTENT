@@ -100,7 +100,7 @@ make docker-up
 | DELETE | `/api/v1/tasks/{id}` | Отменить задачу |
 | GET | `/api/v1/agents` | Список агентов |
 | GET | `/api/v1/status` | Статус системы |
-| WS | `/api/v1/tasks/ws/{id}` | WebSocket стриминг |
+| WS | `/api/v1/tasks/ws/{id}?token=<access_token>` | WebSocket стриминг (JWT обязателен) |
 | GET | `/health` | Health check |
 
 ## CLI

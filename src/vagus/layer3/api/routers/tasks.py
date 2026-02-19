@@ -9,6 +9,7 @@ from typing import Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 
+from ..auth import decode_access_token
 from ..dependencies import get_current_user, get_orchestrator
 from ..models import (
     TaskCreateRequest,
@@ -52,7 +53,7 @@ async def create_task(
         task_id=task_id,
         status=TaskStatus.PENDING,
         status_endpoint=f"/api/v1/tasks/{task_id}",
-        stream_endpoint=f"/ws/v1/tasks/{task_id}",
+        stream_endpoint=f"/api/v1/tasks/ws/{task_id}",
         created_at=now,
     )
 
@@ -128,12 +129,24 @@ async def cancel_task(
 @router.websocket("/ws/{task_id}")
 async def stream_task_result(websocket: WebSocket, task_id: str):
     """WebSocket для стриминга результата задачи."""
+    token = websocket.query_params.get("token")
+    user = decode_access_token(token) if token else None
+
     await websocket.accept()
+    if user is None:
+        await websocket.send_json({"error": "Unauthorized", "done": True})
+        await websocket.close(code=1008)
+        return
+
     try:
         for _ in range(600):  # max 5 min
             task = task_store.get(task_id)
             if not task:
                 await websocket.send_json({"error": "Task not found", "done": True})
+                break
+            owner = task.get("metadata", {}).get("user")
+            if owner and user.get("role") != "admin" and user.get("sub") != owner:
+                await websocket.send_json({"error": "Forbidden", "done": True})
                 break
             if task["status"] == TaskStatus.COMPLETED:
                 result = task.get("result", {})

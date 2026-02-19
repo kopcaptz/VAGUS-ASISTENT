@@ -147,7 +147,7 @@ API версионируется с помощью префикса `/api/v1/`. 
 | `DELETE` | `/api/v1/tasks/{task_id}`       | Отменить задачу (если она ещё выполняется)                        | JWT            |
 | `GET`    | `/api/v1/agents`                | Получить список доступных агентов и их типы задач                 | JWT            |
 | `GET`    | `/api/v1/status`                | Получить общее состояние системы (метрики Слоёв 1 и 2)            | JWT (admin)    |
-| `WS`     | `/ws/v1/tasks/{task_id}`        | WebSocket для стриминга результатов задачи в реальном времени     | JWT (query)    |
+| `WS`     | `/api/v1/tasks/ws/{task_id}`    | WebSocket для стриминга результатов задачи в реальном времени     | JWT (query)    |
 
 ### 4.2. Pydantic-модели Запросов и Ответов
 
@@ -287,7 +287,7 @@ async def create_task(
         task_id=task_id,
         status=TaskStatus.PENDING,
         status_endpoint=f"/api/v1/tasks/{task_id}",
-        stream_endpoint=f"/ws/v1/tasks/{task_id}",
+        stream_endpoint=f"/api/v1/tasks/ws/{task_id}",
         created_at=now,
     )
 
