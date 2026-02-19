@@ -286,6 +286,20 @@ class ConfigManager:
                 "vault_addr": "http://localhost:8200",
                 "vault_token": ""
             },
+            "plugins": {
+                "enabled": True,
+                "auto_discover": True,
+                "scan_directories": ["./plugins", "~/.vagus/plugins"],
+                "sandbox": {
+                    "enabled": True,
+                    "memory_limit_mb": 512,
+                    "timeout_seconds": 30,
+                },
+                "marketplace": {
+                    "url": "https://plugins.vagus.ai",
+                    "cache_ttl_hours": 24,
+                },
+            },
             "providers": {
                 "openai": {
                     "endpoint": "https://api.openai.com/v1",

@@ -9,7 +9,10 @@ from .models import (
     ProviderConfig,
     AgentConfig,
     SkillConfig,
-    LogLevel
+    LogLevel,
+    PluginsConfig,
+    PluginsSandboxConfig,
+    PluginsMarketplaceConfig,
 )
 from .secrets_manager import SecretsManager
 
@@ -21,5 +24,8 @@ __all__ = [
     'AgentConfig',
     'SkillConfig',
     'LogLevel',
+    'PluginsConfig',
+    'PluginsSandboxConfig',
+    'PluginsMarketplaceConfig',
     'SecretsManager',
 ]

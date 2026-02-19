@@ -249,6 +249,42 @@ class TaskTimeoutsConfig(BaseModel):
     analyst: int = Field(default=180, ge=1, le=3600)
 
 
+class PluginsSandboxConfig(BaseModel):
+    """Ограничения sandbox-исполнения плагинов."""
+
+    enabled: bool = Field(default=True)
+    memory_limit_mb: int = Field(default=512, ge=64, le=16384)
+    timeout_seconds: int = Field(default=30, ge=1, le=3600)
+
+
+class PluginsMarketplaceConfig(BaseModel):
+    """Настройки marketplace плагинов."""
+
+    url: str = Field(default="https://plugins.vagus.ai")
+    cache_ttl_hours: int = Field(default=24, ge=1, le=720)
+
+
+class PluginsConfig(BaseModel):
+    """Конфигурация плагинной системы."""
+
+    enabled: bool = Field(default=True)
+    auto_discover: bool = Field(default=True)
+    scan_directories: List[str] = Field(
+        default_factory=lambda: ["./plugins", "~/.vagus/plugins"]
+    )
+    sandbox: PluginsSandboxConfig = Field(default_factory=PluginsSandboxConfig)
+    marketplace: PluginsMarketplaceConfig = Field(default_factory=PluginsMarketplaceConfig)
+
+    @validator("scan_directories")
+    def validate_scan_directories(cls, v):
+        if not v:
+            raise ValueError("plugins.scan_directories must contain at least one directory")
+        normalized = [str(item).strip() for item in v if str(item).strip()]
+        if not normalized:
+            raise ValueError("plugins.scan_directories must contain valid directory paths")
+        return normalized
+
+
 class AppConfig(BaseModel):
     """Основная конфигурация приложения."""
     version: int = Field(default=1, ge=1, description="Версия конфигурации")
@@ -265,6 +301,7 @@ class AppConfig(BaseModel):
         default_factory=TaskTimeoutsConfig,
         description="Таймауты задач по типам агентов",
     )
+    plugins: PluginsConfig = Field(default_factory=PluginsConfig, description="Настройки плагинов")
     secrets: SecretsConfig = Field(default_factory=SecretsConfig, description="Настройки secrets backend")
     
     @validator('version')
