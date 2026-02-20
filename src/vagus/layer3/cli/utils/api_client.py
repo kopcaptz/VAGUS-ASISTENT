@@ -4,6 +4,7 @@ HTTP-клиент для CLI — обращается к REST API Vagus Asistent
 
 import json
 import time
+from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
 from vagus.logging import generate_request_id, generate_trace_id, get_trace_id
@@ -25,18 +26,26 @@ except ImportError:
     HTTPX_AVAILABLE = False
 
 
+@lru_cache(maxsize=1)
+def _load_config_cached() -> dict[str, Any]:
+    return load_config()
+
+
 class CLIApiClient:
     """HTTP-клиент для CLI."""
 
     def __init__(self, api_url: Optional[str] = None, api_key: Optional[str] = None):
-        cfg = load_config()
+        cfg = _load_config_cached()
         self.api_url = (api_url or cfg.get("api_url", "http://localhost:8000")).rstrip("/")
         self.api_key = api_key or cfg.get("api_key", "")
         self.trace_id = get_trace_id() or generate_trace_id()
         self.enable_request_signing = bool(cfg.get("enable_request_signing", True))
         self._client_credentials: Optional[dict[str, str]] = None
-        if self.enable_request_signing:
+
+    def _get_client_credentials(self) -> Optional[dict[str, str]]:
+        if self._client_credentials is None and self.enable_request_signing:
             self._client_credentials = load_or_create_client_credentials()
+        return self._client_credentials
 
     @property
     def _headers(self) -> Dict[str, str]:
@@ -61,17 +70,18 @@ class CLIApiClient:
         if cli_arguments:
             headers["X-Vagus-CLI-Arguments"] = json.dumps(cli_arguments, ensure_ascii=False)
 
-        if self.enable_request_signing and self._client_credentials:
+        credentials = self._get_client_credentials()
+        if self.enable_request_signing and credentials:
             timestamp = str(int(time.time()))
             signature = create_request_signature(
-                secret=self._client_credentials["client_secret"],
+                secret=credentials["client_secret"],
                 method=method,
                 path=path,
                 timestamp=timestamp,
                 body=body_bytes,
-                client_id=self._client_credentials["client_id"],
+                client_id=credentials["client_id"],
             )
-            headers[HEADER_CLIENT_ID] = self._client_credentials["client_id"]
+            headers[HEADER_CLIENT_ID] = credentials["client_id"]
             headers[HEADER_TIMESTAMP] = timestamp
             headers[HEADER_SIGNATURE] = signature
 
@@ -162,3 +172,29 @@ class CLIApiClient:
     def get_system_status(self) -> Dict[str, Any]:
         """Статус системы."""
         return self._get("/api/v1/status", cli_command="admin.status")
+
+    def list_api_keys(self) -> List[Dict[str, Any]]:
+        """Возвращает список API ключей."""
+        payload = self._get("/api/v1/keys", cli_command="keys.list")
+        keys = payload.get("keys", []) if isinstance(payload, dict) else []
+        return keys if isinstance(keys, list) else []
+
+    def get_api_keys_health(self) -> Dict[str, Any]:
+        """Возвращает health по API ключам."""
+        payload = self._get("/api/v1/keys/health", cli_command="keys.health")
+        return payload if isinstance(payload, dict) else {}
+
+    def run_api_keys_health_check(self) -> Dict[str, Any]:
+        """Запускает online health-check ключей."""
+        payload = self._post("/api/v1/keys/health/check", {}, cli_command="keys.health.check")
+        return payload if isinstance(payload, dict) else {}
+
+    def validate_api_key(self, key_name: str) -> Dict[str, Any]:
+        """Валидирует один API ключ по имени."""
+        payload = self._post(
+            f"/api/v1/keys/{key_name}/validate",
+            {},
+            cli_command="keys.validate",
+            cli_arguments={"key_name": key_name},
+        )
+        return payload if isinstance(payload, dict) else {}

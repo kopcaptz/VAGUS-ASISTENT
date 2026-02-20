@@ -469,12 +469,15 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    _cors_origins_raw = os.getenv("VAGUS_CORS_ORIGINS", "http://localhost:8501,http://localhost:3000")
+    _cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:8501", "http://localhost:3000"],
+        allow_origins=_cors_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization", "X-Trace-Id", "X-Request-Id"],
     )
     app.add_middleware(
         RateLimitMiddleware,

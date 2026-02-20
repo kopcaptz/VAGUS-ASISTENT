@@ -21,6 +21,9 @@ dependencies = [
   "pytest>=7.0",
   "pytest-asyncio>=0.21",
   "cryptography>=41.0",
+  "bcrypt>=4.0",
+  "aiogram>=3.0",
+  "google-genai>=0.8",
   "psutil>=5.9",
   "playwright>=1.46",
 ]

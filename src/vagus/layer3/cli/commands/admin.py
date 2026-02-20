@@ -7,9 +7,6 @@ try:
 except ImportError:
     typer = None  # type: ignore[assignment]
 
-from vagus.logging import generate_trace_id, logging_context
-
-from ..utils.api_client import CLIApiClient
 from ..utils.output import print_dict, print_error
 
 if typer is not None:
@@ -23,7 +20,11 @@ if typer is not None:
     @app.command("status")
     def system_status():
         """Показать статус системы."""
+        from vagus.logging import generate_trace_id, logging_context
+
         with logging_context(trace_id=generate_trace_id(), component="cli"):
+            from ..utils.api_client import CLIApiClient
+
             client = CLIApiClient()
             try:
                 data = client.get_system_status()

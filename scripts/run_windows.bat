@@ -16,4 +16,4 @@ if /I "%~1"=="dashboard" (
 )
 
 echo Starting Vagus API with Windows config...
-python -m uvicorn vagus.layer3.api.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn vagus.layer3.api.main:app --host 127.0.0.1 --port 8000 --env-file .env

@@ -13,8 +13,12 @@ except ImportError:
 if STREAMLIT_AVAILABLE:
     import time
 
-    from dashboard.utils.api_client import VagusAPIClient
-    from dashboard.utils.auth import get_token, is_logged_in, set_token
+    try:
+        from dashboard.utils.api_client import VagusAPIClient
+        from dashboard.utils.auth import get_token, is_logged_in, set_token
+    except ModuleNotFoundError:
+        from utils.api_client import VagusAPIClient
+        from utils.auth import get_token, is_logged_in, set_token
 
     st.set_page_config(
         page_title="Vagus Asistent",
@@ -67,7 +71,7 @@ if STREAMLIT_AVAILABLE:
     else:
         st.markdown("### Вход в систему")
         with st.form("login_form"):
-            username = st.text_input("Логин", value="admin")
+            username = st.text_input("Логин")
             password = st.text_input("Пароль", type="password")
             submitted = st.form_submit_button("Войти")
 

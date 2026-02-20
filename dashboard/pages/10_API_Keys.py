@@ -13,8 +13,12 @@ except ImportError:
     STREAMLIT_AVAILABLE = False
 
 if STREAMLIT_AVAILABLE:
-    from dashboard.utils.api_client import VagusAPIClient
-    from dashboard.utils.auth import get_token, require_login
+    try:
+        from dashboard.utils.api_client import VagusAPIClient
+        from dashboard.utils.auth import attach_unauthorized_handler, get_token, require_login
+    except ModuleNotFoundError:
+        from utils.api_client import VagusAPIClient
+        from utils.auth import attach_unauthorized_handler, get_token, require_login
 
 
 def mask_key(value: str) -> str:
@@ -56,7 +60,7 @@ if STREAMLIT_AVAILABLE:
     st.caption("Безопасное управление API ключами через backend API")
 
     token = get_token()
-    client = VagusAPIClient(token=token)
+    client = attach_unauthorized_handler(VagusAPIClient(token=token))
 
     col_left, col_right = st.columns([1, 1])
     with col_left:
@@ -117,6 +121,8 @@ if STREAMLIT_AVAILABLE:
         st.subheader("Действия")
         selected = st.selectbox("Выберите ключ", options=[str(x.get("name", "")) for x in keys])
         action_col1, action_col2, action_col3 = st.columns(3)
+        selected_row = next((x for x in keys if x.get("name") == selected), {})
+        is_env_only_key = selected_row.get("created_at") is None
 
         with action_col1:
             if st.button("Validate"):
@@ -131,15 +137,17 @@ if STREAMLIT_AVAILABLE:
 
         with action_col2:
             if st.button("Delete"):
-                try:
-                    client.delete_api_key(selected)
-                    st.success("Ключ удалён.")
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"Ошибка удаления: {exc}")
+                if is_env_only_key:
+                    st.warning("Этот ключ загружен из окружения (.env) и не удаляется через API.")
+                else:
+                    try:
+                        client.delete_api_key(selected)
+                        st.success("Ключ удалён.")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Ошибка удаления: {exc}")
 
         with action_col3:
-            selected_row = next((x for x in keys if x.get("name") == selected), {})
             masked_value = str(selected_row.get("masked_value") or "***")
             st.code(masked_value, language=None)
             st.caption("Copy: используйте кнопку копирования у code-блока.")

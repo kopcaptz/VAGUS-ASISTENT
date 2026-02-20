@@ -36,10 +36,11 @@ Use silent mode for automation:
 - DPAPI ties encryption to Windows account context.
 - Master key file uses DPAPI envelope format (`DPAPIv1`).
 - Legacy plain/base64 master keys are migrated automatically.
+- Plaintext backup of master key is not created.
 
 ## Troubleshooting
 
 - `Python not found`: add Python to `PATH`.
 - `Missing dependency: cryptography`: run `pip install -r requirements.txt`.
 - DPAPI errors: confirm process is running under a normal user profile and retry.
-- Recovery path: use `.keys_master.plain.bak` in `~/.vagus` if DPAPI context changes.
+- Recovery path: restore access via the same Windows user context (DPAPI-bound key), or provide `VAGUS_KEYS_MASTER_KEY` explicitly for controlled recovery.

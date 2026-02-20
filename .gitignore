@@ -60,6 +60,18 @@ configs/telegram_test.yaml
 htmlcov/
 .tox/
 
+# Windows system artifacts
+Microsoft/
+AppData/
+
+# Temporary test scripts in root
+/auth_smoke_test.py
+/careful_login_test*.py
+/debug_auth_test.py
+/test_*.py
+/smoke_test_*.py
+/create_structure*.py
+
 # Project data
 data/
 *.db

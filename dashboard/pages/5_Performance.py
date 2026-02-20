@@ -8,15 +8,20 @@ except ImportError:
     STREAMLIT_AVAILABLE = False
 
 if STREAMLIT_AVAILABLE:
-    from dashboard.utils.api_client import VagusAPIClient
-    from dashboard.utils.auth import get_token, require_login
-    from dashboard.utils.charts import append_history_snapshot, build_performance_snapshot
+    try:
+        from dashboard.utils.api_client import VagusAPIClient
+        from dashboard.utils.auth import attach_unauthorized_handler, get_token, require_login
+        from dashboard.utils.charts import append_history_snapshot, build_performance_snapshot
+    except ModuleNotFoundError:
+        from utils.api_client import VagusAPIClient
+        from utils.auth import attach_unauthorized_handler, get_token, require_login
+        from utils.charts import append_history_snapshot, build_performance_snapshot
 
     require_login()
     st.title("Performance")
     st.caption("Realtime telemetry + history window (24h)")
 
-    client = VagusAPIClient(token=get_token())
+    client = attach_unauthorized_handler(VagusAPIClient(token=get_token()))
     history = st.session_state.get("performance_history", [])
 
     try:

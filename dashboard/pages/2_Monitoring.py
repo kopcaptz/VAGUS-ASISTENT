@@ -8,15 +8,20 @@ except ImportError:
     STREAMLIT_AVAILABLE = False
 
 if STREAMLIT_AVAILABLE:
-    from dashboard.utils.api_client import VagusAPIClient
-    from dashboard.utils.auth import get_token, require_login
-    from dashboard.utils.charts import extract_metrics
+    try:
+        from dashboard.utils.api_client import VagusAPIClient
+        from dashboard.utils.auth import attach_unauthorized_handler, get_token, require_login
+        from dashboard.utils.charts import extract_metrics
+    except ModuleNotFoundError:
+        from utils.api_client import VagusAPIClient
+        from utils.auth import attach_unauthorized_handler, get_token, require_login
+        from utils.charts import extract_metrics
 
     require_login()
 
     st.title("Мониторинг")
 
-    client = VagusAPIClient(token=get_token())
+    client = attach_unauthorized_handler(VagusAPIClient(token=get_token()))
 
     try:
         status = client.get_system_status()

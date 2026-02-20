@@ -20,7 +20,8 @@ def _get_pricing(model: str) -> tuple:
 
 
 try:
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types as genai_types
     GOOGLE_AVAILABLE = True
 except ImportError:
     GOOGLE_AVAILABLE = False
@@ -39,7 +40,9 @@ class GoogleProvider(LLMProvider):
     ):
         super().__init__(name=name, model=model, api_key=api_key, timeout=timeout, **kwargs)
         if GOOGLE_AVAILABLE:
-            genai.configure(api_key=api_key)
+            self._client = genai.Client(api_key=api_key)
+        else:
+            self._client = None
 
     async def request(
         self,
@@ -48,18 +51,10 @@ class GoogleProvider(LLMProvider):
         **kwargs,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         if not GOOGLE_AVAILABLE:
-            raise RuntimeError("google-generativeai not installed. pip install google-generativeai")
+            raise RuntimeError("google-genai not installed. pip install google-genai")
         model_name = kwargs.get("model") or self.model
-        model = genai.GenerativeModel(model_name)
-        if stream:
-            resp = model.generate_content(prompt, stream=True)
-            async for chunk in resp:
-                if chunk.text:
-                    yield {"content": chunk.text, "done": False}
-            yield {"content": "", "done": True}
-        else:
-            resp = model.generate_content(prompt)
-            yield {"content": resp.text or "", "done": True}
+        response = self._client.models.generate_content(model=model_name, contents=prompt)
+        yield {"content": response.text or "", "done": True}
 
     def calculate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
         inp, out = _get_pricing(self.model)

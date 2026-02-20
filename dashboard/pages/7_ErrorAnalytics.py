@@ -8,15 +8,20 @@ except ImportError:
     STREAMLIT_AVAILABLE = False
 
 if STREAMLIT_AVAILABLE:
-    from dashboard.utils.api_client import VagusAPIClient
-    from dashboard.utils.auth import get_token, require_login
-    from dashboard.utils.charts import extract_error_rates
+    try:
+        from dashboard.utils.api_client import VagusAPIClient
+        from dashboard.utils.auth import attach_unauthorized_handler, get_token, require_login
+        from dashboard.utils.charts import extract_error_rates
+    except ModuleNotFoundError:
+        from utils.api_client import VagusAPIClient
+        from utils.auth import attach_unauthorized_handler, get_token, require_login
+        from utils.charts import extract_error_rates
 
     require_login()
     st.title("Error Analytics")
     st.caption("Классификация ошибок, источники и корреляции")
 
-    client = VagusAPIClient(token=get_token())
+    client = attach_unauthorized_handler(VagusAPIClient(token=get_token()))
     window_minutes = st.selectbox("Окно анализа (минуты)", [15, 30, 60, 180, 360], index=2)
     top_limit = st.slider("Top error sources", min_value=3, max_value=25, value=10)
 

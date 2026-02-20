@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 import time
 import uuid
 from contextlib import contextmanager
@@ -100,7 +101,12 @@ def configure_structured_logging(level: int = logging.INFO, force: bool = False)
     root.setLevel(level)
 
     if not root.handlers:
-        handler = logging.StreamHandler()
+        handler = logging.StreamHandler(sys.stdout)
+        if hasattr(handler.stream, "reconfigure"):
+            try:
+                handler.stream.reconfigure(encoding="utf-8")
+            except Exception:
+                pass
         handler.setFormatter(StructuredJSONFormatter())
         root.addHandler(handler)
         return

@@ -3,6 +3,7 @@ ResearcherAgent — агент для поиска информации.
 Использует SkillSystem (search_web) и LLMRouter для синтеза ответа.
 """
 
+import re
 from typing import Any, Optional
 
 from ..skills import SkillSystem
@@ -46,6 +47,14 @@ class ResearcherAgent(BaseAgent):
         if not prompt:
             return {"content": "", "error": "Empty prompt", "metadata": {}}
 
+        # Short conversational prompts should not depend on web-search results.
+        if self._is_small_talk(prompt):
+            content = await self._call_llm(self._build_chat_prompt(prompt))
+            return {
+                "content": content,
+                "metadata": {"agent": "researcher", "mode": "chat"},
+            }
+
         # 1. Поиск через SkillSystem
         search_result = await self.skill_system.use_skill("search_web", query=prompt)
         if isinstance(search_result, dict) and "error" in search_result:
@@ -70,8 +79,9 @@ class ResearcherAgent(BaseAgent):
         return (
             f"Пользователь спросил: «{query}»\n\n"
             f"Результаты поиска:\n{search_results}\n\n"
-            "Сформируй краткий и информативный ответ на основе этих данных. "
-            "Если данных недостаточно — укажи это."
+            "Сформируй краткий и полезный ответ для пользователя. "
+            "Используй результаты поиска как дополнительный контекст, "
+            "но если они неполные или шумные — ответь по общим знаниям без выдумывания фактов."
         )
 
     async def _call_llm(self, prompt: str) -> str:
@@ -82,3 +92,24 @@ class ResearcherAgent(BaseAgent):
             if chunk.get("done"):
                 break
         return "".join(content_parts)
+
+    def _is_small_talk(self, prompt: str) -> bool:
+        normalized = " ".join(prompt.lower().split())
+        if not normalized:
+            return False
+        patterns = (
+            r"^(привет|здравствуй|здравствуйте|хай|hello|hi)\b",
+            r"как дела\??$",
+            r"кто ты\??$",
+            r"что умеешь\??$",
+            r"чем можешь помочь\??$",
+        )
+        return any(re.search(pattern, normalized) for pattern in patterns)
+
+    def _build_chat_prompt(self, user_message: str) -> str:
+        return (
+            "Ты дружелюбный русскоязычный AI-ассистент. "
+            "Это короткий диалоговый запрос пользователя, ответь естественно и по делу, "
+            "без фраз про отсутствие данных.\n\n"
+            f"Сообщение пользователя: {user_message}"
+        )

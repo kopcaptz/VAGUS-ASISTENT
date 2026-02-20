@@ -4,6 +4,7 @@
 """
 
 import logging
+import sys
 from typing import Optional
 
 # Глобальный флаг: была ли выполнена базовая настройка
@@ -36,7 +37,12 @@ def _configure_root() -> None:
     if root.handlers:
         return
     
-    handler = logging.StreamHandler()
+    handler = logging.StreamHandler(sys.stdout)
+    if hasattr(handler.stream, "reconfigure"):
+        try:
+            handler.stream.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
     formatter = logging.Formatter(
         "%(asctime)s | %(name)s | %(levelname)s | %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",

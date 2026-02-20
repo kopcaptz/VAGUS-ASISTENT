@@ -114,7 +114,6 @@ class KeyManager:
         self._base_dir.mkdir(parents=True, exist_ok=True)
         self._keys_file = self._base_dir / "keys.enc"
         self._master_file = self._base_dir / ".keys_master"
-        self._master_plain_backup_file = self._base_dir / ".keys_master.plain.bak"
 
     @classmethod
     def reset_instance_for_tests(cls) -> None:
@@ -298,14 +297,6 @@ class KeyManager:
                 return self._normalize_master_key(plain)
             except Exception as exc:
                 logger.warning("Failed to unprotect DPAPI master key, trying fallback format: %s", exc)
-                try:
-                    if self._master_plain_backup_file.exists():
-                        backup_raw = self._master_plain_backup_file.read_text(encoding="utf-8").strip()
-                        if backup_raw:
-                            decoded = base64.b64decode(backup_raw.encode("utf-8"))
-                            return self._normalize_master_key(decoded)
-                except Exception:
-                    pass
 
         try:
             raw_text = raw_bytes.decode("utf-8").strip()
@@ -343,12 +334,6 @@ class KeyManager:
             try:
                 protected = protect_data(normalized)
                 self._master_file.write_bytes(protected)
-                # Keep plaintext backup for emergency/manual recovery.
-                self._master_plain_backup_file.write_text(encoded, encoding="utf-8")
-                try:
-                    os.chmod(self._master_plain_backup_file, 0o600)
-                except Exception:
-                    pass
                 return
             except Exception as exc:
                 logger.warning("DPAPI protect failed, falling back to file key storage: %s", exc)

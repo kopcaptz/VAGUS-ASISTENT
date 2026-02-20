@@ -26,7 +26,7 @@ rich>=13.0
 # pip install playwright>=1.46
 
 # Layer 3: Telegram Bot (optional)
-# pip install aiogram>=3.0
+aiogram>=3.0
 
 # Testing
 pytest>=7.0

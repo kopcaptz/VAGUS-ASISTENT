@@ -15,11 +15,18 @@ import time
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from typing import Any, Optional
 
+import bcrypt
+
 from vagus.layer0.logging import get_logger
 
 logger = get_logger("layer3.api.auth")
 
-SECRET_KEY = os.getenv("VAGUS_SECRET_KEY", "vagus-dev-secret-key-change-in-production")
+SECRET_KEY = os.getenv("VAGUS_SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError(
+        "VAGUS_SECRET_KEY environment variable is not set. "
+        "Generate a secure key with: python -c \"import secrets; print(secrets.token_urlsafe(64))\""
+    )
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_SECONDS = 900  # 15 min
 REFRESH_TOKEN_EXPIRE_SECONDS = 604800  # 7 days
@@ -131,18 +138,37 @@ _jwt_secret_manager = JWTSecretManager(
     max_old_secrets=3,
 )
 
-_USERS_DB: dict[str, dict] = {
-    "admin": {
-        "username": "admin",
-        "hashed_password": hashlib.sha256(b"admin").hexdigest(),
-        "role": "admin",
-    },
-    "user": {
-        "username": "user",
-        "hashed_password": hashlib.sha256(b"user").hexdigest(),
-        "role": "user",
-    },
-}
+def _load_users_db_from_env() -> dict[str, dict]:
+    admin_username = os.getenv("VAGUS_ADMIN_USERNAME")
+    admin_password_hash = os.getenv("VAGUS_ADMIN_PASSWORD_HASH")
+    if not admin_username or not admin_password_hash:
+        raise ValueError(
+            "VAGUS_ADMIN_USERNAME and VAGUS_ADMIN_PASSWORD_HASH must be set. "
+            "Generate hash with: python -c \"import bcrypt; print(bcrypt.hashpw(b'your_password', bcrypt.gensalt()).decode())\""
+        )
+
+    users_db: dict[str, dict] = {
+        admin_username: {
+            "username": admin_username,
+            "hashed_password": admin_password_hash,
+            "role": "admin",
+        }
+    }
+
+    user_username = os.getenv("VAGUS_USER_USERNAME")
+    user_password_hash = os.getenv("VAGUS_USER_PASSWORD_HASH")
+    if bool(user_username) != bool(user_password_hash):
+        raise ValueError("Set both VAGUS_USER_USERNAME and VAGUS_USER_PASSWORD_HASH, or leave both empty.")
+    if user_username and user_password_hash:
+        users_db[user_username] = {
+            "username": user_username,
+            "hashed_password": user_password_hash,
+            "role": "user",
+        }
+    return users_db
+
+
+_USERS_DB: dict[str, dict] = _load_users_db_from_env()
 
 
 def _b64_encode(data: bytes) -> str:
@@ -257,13 +283,13 @@ def decode_refresh_token(token: str) -> Optional[dict]:
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Сравнивает пароль с хэшем (SHA-256)."""
-    return hashlib.sha256(plain_password.encode()).hexdigest() == hashed_password
+    """Проверяет пароль против bcrypt-хеша."""
+    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
 
 
 def get_password_hash(password: str) -> str:
-    """Хэширует пароль (SHA-256)."""
-    return hashlib.sha256(password.encode()).hexdigest()
+    """Хеширует пароль с использованием bcrypt."""
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def authenticate_user(username: str, password: str) -> Optional[dict]:

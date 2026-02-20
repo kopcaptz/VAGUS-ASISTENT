@@ -11,9 +11,6 @@ try:
 except ImportError:
     typer = None  # type: ignore[assignment]
 
-from vagus.logging import generate_trace_id, logging_context
-
-from ..utils.api_client import CLIApiClient
 from ..utils.output import print_dict, print_error, print_info, print_success, print_table
 
 if typer is not None:
@@ -29,6 +26,8 @@ def _get_app():
 
 
 def _cli_context():
+    from vagus.logging import generate_trace_id, logging_context
+
     return logging_context(trace_id=generate_trace_id(), component="cli")
 
 
@@ -42,6 +41,8 @@ if typer is not None:
     ):
         """Создать и выполнить новую задачу."""
         with _cli_context():
+            from ..utils.api_client import CLIApiClient
+
             client = CLIApiClient()
             try:
                 response = client.create_task(prompt=prompt, task_type=task_type)
@@ -79,6 +80,8 @@ if typer is not None:
     def get_status(task_id: str = typer.Argument(..., help="ID задачи")):
         """Получить статус задачи."""
         with _cli_context():
+            from ..utils.api_client import CLIApiClient
+
             client = CLIApiClient()
             try:
                 data = client.get_task_status(task_id)
@@ -93,6 +96,8 @@ if typer is not None:
     ):
         """Показать список последних задач."""
         with _cli_context():
+            from ..utils.api_client import CLIApiClient
+
             client = CLIApiClient()
             try:
                 tasks = client.list_tasks(limit=limit)

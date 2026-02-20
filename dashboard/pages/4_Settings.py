@@ -8,7 +8,10 @@ except ImportError:
     STREAMLIT_AVAILABLE = False
 
 if STREAMLIT_AVAILABLE:
-    from dashboard.utils.auth import get_token, logout, require_login
+    try:
+        from dashboard.utils.auth import get_token, logout, require_login
+    except ModuleNotFoundError:
+        from utils.auth import get_token, logout, require_login
 
     require_login()
 

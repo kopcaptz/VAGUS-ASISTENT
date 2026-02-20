@@ -10,18 +10,26 @@ except ImportError:
 if STREAMLIT_AVAILABLE:
     import time
 
-    from dashboard.utils.api_client import VagusAPIClient
-    from dashboard.utils.auth import get_token, require_login
-    from dashboard.utils.charts import (
-        append_circuit_breaker_history,
-        flatten_circuit_breaker_history,
-    )
+    try:
+        from dashboard.utils.api_client import VagusAPIClient
+        from dashboard.utils.auth import attach_unauthorized_handler, get_token, require_login
+        from dashboard.utils.charts import (
+            append_circuit_breaker_history,
+            flatten_circuit_breaker_history,
+        )
+    except ModuleNotFoundError:
+        from utils.api_client import VagusAPIClient
+        from utils.auth import attach_unauthorized_handler, get_token, require_login
+        from utils.charts import (
+            append_circuit_breaker_history,
+            flatten_circuit_breaker_history,
+        )
 
     require_login()
     st.title("Circuit Breakers")
     st.caption("Состояние, счётчики отказов, success rate и ручной reset")
 
-    client = VagusAPIClient(token=get_token())
+    client = attach_unauthorized_handler(VagusAPIClient(token=get_token()))
     local_history = st.session_state.get("circuit_breaker_history", [])
 
     try:

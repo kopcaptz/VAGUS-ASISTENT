@@ -20,12 +20,6 @@ try:
 except ImportError:
     typer = None  # type: ignore[assignment]
 
-from vagus.plugins.core.models import LoadedPlugin, PluginLifecycleState
-from vagus.plugins.loader import GitLoader, LocalLoader, PluginLoaderError
-from vagus.plugins.marketplace import MarketplaceClient
-from vagus.plugins.registry import PluginRegistry
-from vagus.plugins.tools import PluginTemplateError, PluginTemplateGenerator
-
 from ..utils.output import print_error, print_info, print_success, print_table
 
 PLUGIN_INSTALL_ROOT = Path.home() / ".vagus" / "plugins"
@@ -98,11 +92,15 @@ def _locate_plugin_root(search_root: Path) -> Path:
 
     manifests = sorted(search_root.rglob("manifest.json"), key=lambda item: len(item.parts))
     if not manifests:
+        from vagus.plugins.loader import PluginLoaderError
+
         raise PluginLoaderError(f"manifest.json not found in extracted plugin source: {search_root}")
     return manifests[0].parent
 
 
 def _download_and_extract_plugin_from_url(source_url: str) -> tuple[Path, Path]:
+    from vagus.plugins.loader import PluginLoaderError
+
     temp_root = Path(tempfile.mkdtemp(prefix="vagus_plugin_url_"))
     download_name = Path(urlparse(source_url).path).name or "plugin_download.bin"
     download_path = temp_root / download_name
@@ -134,12 +132,17 @@ def _download_and_extract_plugin_from_url(source_url: str) -> tuple[Path, Path]:
 
 
 def _resolve_loaded_source_dir(loaded: LoadedPlugin) -> Path:
+    from vagus.plugins.loader import PluginLoaderError
+
     if not loaded.source:
         raise PluginLoaderError(f"Loader did not provide source path for plugin '{loaded.name}'")
     return Path(loaded.source).expanduser().resolve()
 
 
 def _load_plugin_from_marketplace(plugin_id: str, version: Optional[str]) -> tuple[LoadedPlugin, Path, Path]:
+    from vagus.plugins.loader import GitLoader, LocalLoader, PluginLoaderError
+    from vagus.plugins.marketplace import MarketplaceClient
+
     client = MarketplaceClient()
     details = client.get_plugin_details(plugin_id)
     if not details:
@@ -173,6 +176,8 @@ def _load_plugin_from_marketplace(plugin_id: str, version: Optional[str]) -> tup
 
 
 def _load_plugin_for_install(source: str, version: Optional[str]) -> tuple[LoadedPlugin, Path, Optional[Path]]:
+    from vagus.plugins.loader import GitLoader, LocalLoader
+
     candidate_path = Path(source).expanduser()
     local_loader = LocalLoader()
 
@@ -198,6 +203,9 @@ def _persist_installed_plugin(
     source_dir: Path,
     install_origin: str,
 ) -> tuple[LoadedPlugin, Path]:
+    from vagus.plugins.core.models import PluginLifecycleState
+    from vagus.plugins.loader import LocalLoader, PluginLoaderError
+
     _ensure_storage()
 
     install_dir = (PLUGIN_INSTALL_ROOT / loaded_plugin.name).resolve()
@@ -230,6 +238,10 @@ def _persist_installed_plugin(
 
 
 def _load_runtime_registry() -> tuple[PluginRegistry, dict[str, Any], dict[str, str]]:
+    from vagus.plugins.core.models import PluginLifecycleState
+    from vagus.plugins.loader import LocalLoader
+    from vagus.plugins.registry import PluginRegistry
+
     state = _load_plugin_state()
     registry = PluginRegistry()
     registry.clear()
@@ -288,6 +300,8 @@ if typer is not None:
         destination: str = typer.Option(".", help="Директория назначения"),
     ):
         """Создать новый плагин по шаблону."""
+        from vagus.plugins.tools import PluginTemplateError, PluginTemplateGenerator
+
         generator = PluginTemplateGenerator(destination_root=destination)
         try:
             plugin_dir = generator.create(name=name, template=template)  # type: ignore[arg-type]
@@ -306,6 +320,8 @@ if typer is not None:
         ),
     ):
         """Установить плагин из локального пути, URL или marketplace."""
+        from vagus.plugins.registry import PluginRegistry
+
         registry = PluginRegistry()
         temp_dir: Optional[Path] = None
         try:
@@ -333,6 +349,8 @@ if typer is not None:
         all_plugins: bool = typer.Option(False, "--all", help="Показать все плагины"),
     ):
         """Показать список установленных плагинов."""
+        from vagus.plugins.core.models import PluginLifecycleState
+
         if enabled and disabled:
             print_error("Нельзя одновременно использовать --enabled и --disabled")
             raise typer.Exit(code=1)

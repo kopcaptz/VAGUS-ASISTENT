@@ -2,25 +2,30 @@
 Vagus Asistent - ???????????? ???????? ???????.
 """
 
-# ???? 1: ???? LLM
-from .layer1 import (
-    LLMRouter,
-    BaseProvider,
-    ProviderFactory,
-    BaseBalancingStrategy,
-    HybridStrategy,
-    CircuitBreaker,
-    FallbackHandler,
-    MonitoringService,
-    CacheService,
-    BudgetingService,
-)
+_LAYER0_EXPORTS = {"ConfigManager", "AppConfig"}
+_LAYER1_EXPORTS = {
+    "LLMRouter",
+    "BaseProvider",
+    "ProviderFactory",
+    "BaseBalancingStrategy",
+    "HybridStrategy",
+    "CircuitBreaker",
+    "FallbackHandler",
+    "MonitoringService",
+    "CacheService",
+    "BudgetingService",
+}
 
-# ???? 0: ??????? ?????? (ConfigManager ????? ??????????? ??? ????????)
+
 def __getattr__(name):
-    if name in ("ConfigManager", "AppConfig"):
-        from .layer0.config import ConfigManager, AppConfig
+    if name in _LAYER0_EXPORTS:
+        from .layer0.config import AppConfig, ConfigManager
+
         return ConfigManager if name == "ConfigManager" else AppConfig
+    if name in _LAYER1_EXPORTS:
+        from . import layer1
+
+        return getattr(layer1, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [

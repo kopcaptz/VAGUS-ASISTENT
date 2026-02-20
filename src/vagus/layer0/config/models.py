@@ -3,7 +3,16 @@ Pydantic модели конфигурации для Vagus Asistent.
 Основано на рекомендациях GPT.
 """
 
-from pydantic import BaseModel, Field, SecretStr, HttpUrl, validator, field_serializer
+from pydantic import (
+    BaseModel,
+    Field,
+    SecretStr,
+    HttpUrl,
+    field_validator,
+    ConfigDict,
+    field_serializer,
+    model_validator,
+)
 from typing import Dict, List, Optional, Any
 from enum import Enum
 import re
@@ -26,7 +35,7 @@ class GlobalConfig(BaseModel):
     max_concurrent_requests: int = Field(default=10, ge=1, le=100, description="Максимум параллельных запросов")
     api_timeout: int = Field(default=30, ge=1, le=300, description="Таймаут API запросов в секундах")
     
-    @validator('workspace_path')
+    @field_validator("workspace_path")
     def validate_workspace_path(cls, v):
         """Валидация пути к workspace."""
         import os
@@ -36,7 +45,7 @@ class GlobalConfig(BaseModel):
             v = str(project_root / v)
         return v
     
-    @validator('default_model')
+    @field_validator("default_model")
     def validate_model_name(cls, v):
         """Валидация имени модели."""
         if not v or len(v.strip()) < 2:
@@ -53,7 +62,7 @@ class ProviderConfig(BaseModel):
     enabled: bool = Field(default=True, description="Включен ли провайдер")
     models: List[str] = Field(default_factory=list, description="Доступные модели")
     
-    @validator('endpoint')
+    @field_validator("endpoint")
     def validate_endpoint(cls, v):
         """Валидация endpoint URL."""
         url_str = str(v)
@@ -66,10 +75,7 @@ class ProviderConfig(BaseModel):
         """Сериализация API ключа (маскирование)."""
         return "**********" if api_key else ""
     
-    class Config:
-        json_encoders = {
-            SecretStr: lambda v: "**********" if v else ""
-        }
+    model_config = ConfigDict()
 
 
 class AgentConfig(BaseModel):
@@ -86,14 +92,14 @@ class AgentConfig(BaseModel):
     skills: List[str] = Field(default_factory=list, description="Список навыков агента")
     enabled: bool = Field(default=True, description="Включен ли агент")
     
-    @validator('temperature')
+    @field_validator("temperature")
     def validate_temperature(cls, v):
         """Валидация температуры."""
         if v < 0.0 or v > 2.0:
             raise ValueError('Temperature must be between 0.0 and 2.0')
         return round(v, 2)
     
-    @validator('model')
+    @field_validator("model")
     def validate_model_reference(cls, v, values):
         """Валидация ссылки на модель."""
         if not v or len(v.strip()) < 2:
@@ -110,7 +116,7 @@ class SkillConfig(BaseModel):
     dependencies: List[str] = Field(default_factory=list, description="Зависимости навыка")
     category: Optional[str] = Field(None, description="Категория навыка")
     
-    @validator('version')
+    @field_validator("version")
     def validate_version(cls, v):
         """Валидация версии (семантическое версионирование)."""
         pattern = r'^\d+\.\d+\.\d+$'
@@ -223,7 +229,7 @@ class SecretsConfig(BaseModel):
     vault_addr: Optional[str] = Field(default=None, description="URL Hashicorp Vault")
     vault_token: Optional[str] = Field(default=None, description="Токен Vault")
 
-    @validator("backend")
+    @field_validator("backend")
     def validate_backend(cls, v):
         value = (v or "").strip().lower()
         if value not in {"local", "vault"}:
@@ -281,7 +287,7 @@ class PluginsSandboxConfig(BaseModel):
         description="Разрешённые домены для sandbox network access",
     )
 
-    @validator("filesystem_whitelist", "network_whitelist")
+    @field_validator("filesystem_whitelist", "network_whitelist")
     def validate_whitelists(cls, v):
         normalized = [str(item).strip() for item in v if str(item).strip()]
         return normalized
@@ -304,7 +310,7 @@ class PluginsSecurityConfig(BaseModel):
         default_factory=lambda: ["os.system", "subprocess.Popen", "ctypes"]
     )
 
-    @validator("trusted_keys", "banned_imports")
+    @field_validator("trusted_keys", "banned_imports")
     def validate_string_list_values(cls, v):
         return [str(item).strip() for item in v if str(item).strip()]
 
@@ -318,7 +324,7 @@ class PluginsHotReloadConfig(BaseModel):
     )
     debounce_ms: int = Field(default=500, ge=50, le=60000)
 
-    @validator("watch_directories")
+    @field_validator("watch_directories")
     def validate_watch_directories(cls, v):
         normalized = [str(item).strip() for item in v if str(item).strip()]
         if not normalized:
@@ -339,7 +345,7 @@ class PluginsConfig(BaseModel):
     hot_reload: PluginsHotReloadConfig = Field(default_factory=PluginsHotReloadConfig)
     marketplace: PluginsMarketplaceConfig = Field(default_factory=PluginsMarketplaceConfig)
 
-    @validator("scan_directories")
+    @field_validator("scan_directories")
     def validate_scan_directories(cls, v):
         if not v:
             raise ValueError("plugins.scan_directories must contain at least one directory")
@@ -369,30 +375,23 @@ class AppConfig(BaseModel):
     secrets: SecretsConfig = Field(default_factory=SecretsConfig, description="Настройки secrets backend")
     key_backup: KeyBackupConfig = Field(default_factory=KeyBackupConfig, description="Настройки backup API ключей")
     
-    @validator('version')
+    @field_validator("version")
     def validate_version(cls, v):
         """Валидация версии конфигурации."""
         if v < 1:
             raise ValueError('Configuration version must be at least 1')
         return v
     
-    @validator('agents')
-    def validate_agent_skills(cls, v, values):
+    @model_validator(mode="after")
+    def validate_agent_skills(self):
         """Валидация навыков агентов."""
-        if 'skills' not in values:
-            return v
-        
-        available_skills = set(values['skills'].keys())
-        
-        for agent_name, agent_config in v.items():
+        available_skills = set(self.skills.keys())
+
+        for agent_name, agent_config in self.agents.items():
             for skill in agent_config.skills:
                 if skill not in available_skills:
                     raise ValueError(f'Agent "{agent_name}" references unknown skill: {skill}')
-        
-        return v
-    
-    class Config:
-        allow_population_by_field_name = True
-        json_encoders = {
-            SecretStr: lambda v: "**********" if v else ""
-        }
+
+        return self
+
+    model_config = ConfigDict(populate_by_name=True)

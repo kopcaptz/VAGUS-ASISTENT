@@ -12,13 +12,20 @@ try:
 except ImportError:
     STREAMLIT_AVAILABLE = False
 
-from dashboard.utils.plugins import format_plugin_logs, summarize_installed_plugins
+try:
+    from dashboard.utils.plugins import format_plugin_logs, summarize_installed_plugins
+except ModuleNotFoundError:
+    from utils.plugins import format_plugin_logs, summarize_installed_plugins
 
 if STREAMLIT_AVAILABLE:
     import streamlit.components.v1 as components
 
-    from dashboard.utils.api_client import VagusAPIClient
-    from dashboard.utils.auth import get_token, require_login
+    try:
+        from dashboard.utils.api_client import VagusAPIClient
+        from dashboard.utils.auth import attach_unauthorized_handler, get_token, require_login
+    except ModuleNotFoundError:
+        from utils.api_client import VagusAPIClient
+        from utils.auth import attach_unauthorized_handler, get_token, require_login
 
 
 def _safe_json_dumps(payload: Any) -> str:
@@ -200,7 +207,7 @@ if STREAMLIT_AVAILABLE:
     st.caption("Управление плагинами и marketplace через API")
 
     token_value = get_token()
-    client = VagusAPIClient(token=token_value)
+    client = attach_unauthorized_handler(VagusAPIClient(token=token_value))
 
     try:
         installed_plugins = client.get_plugins()
