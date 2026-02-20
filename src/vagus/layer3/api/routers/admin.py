@@ -14,10 +14,16 @@ from ..audit.audit_trail import AuditTrail
 from ..dependencies import get_current_admin
 from ..models import (
     AuditTrailLogEntry,
+    CircuitBreakerHistoryEntry,
+    CircuitBreakerResetResponse,
+    CircuitBreakersResponse,
     CircuitBreakerStatsResponse,
     DeadLetterQueueEntryResponse,
     DeadLetterQueueManualFixRequest,
     DeadLetterQueueRetryRequest,
+    DeadLetterQueueRetryResponse,
+    ErrorAnalyticsResponse,
+    MemoryStatsResponse,
 )
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -60,14 +66,14 @@ def _state_to_public(raw_state: str) -> str:
     return "closed"
 
 
-def _collect_circuit_breaker_stats(request: Request) -> list[dict[str, Any]]:
+def _collect_circuit_breaker_stats(request: Request) -> list[CircuitBreakerStatsResponse]:
     llm_router = getattr(request.app.state, "llm_router", None)
     fallback_handler = getattr(llm_router, "fallback_handler", None) if llm_router else None
     breakers = getattr(fallback_handler, "_circuit_breakers", {}) if fallback_handler else {}
     if not isinstance(breakers, dict):
         return []
 
-    result: list[dict[str, Any]] = []
+    result: list[CircuitBreakerStatsResponse] = []
     for provider_id, breaker in breakers.items():
         stats = {}
         if hasattr(breaker, "get_stats") and callable(breaker.get_stats):
@@ -82,19 +88,19 @@ def _collect_circuit_breaker_stats(request: Request) -> list[dict[str, Any]]:
         total = total_success + total_failure
         success_rate = float(stats.get("success_rate", (total_success / total * 100.0) if total > 0 else 100.0))
         result.append(
-            {
-                "provider_id": str(provider_id),
-                "state": _state_to_public(state_name),
-                "failure_count": int(stats.get("failure_count", 0) or 0),
-                "last_failure_time": stats.get("last_failure_iso") or stats.get("last_failure_time"),
-                "success_rate": success_rate,
-                "recovery_timeout": int(stats.get("recovery_timeout", 0) or 0),
-                "failure_threshold": int(stats.get("failure_threshold", 0) or 0),
-                "total_success_count": total_success,
-                "total_failure_count": total_failure,
-            }
+            CircuitBreakerStatsResponse(
+                provider_id=str(provider_id),
+                state=_state_to_public(state_name),
+                failure_count=int(stats.get("failure_count", 0) or 0),
+                last_failure_time=stats.get("last_failure_iso") or stats.get("last_failure_time"),
+                success_rate=success_rate,
+                recovery_timeout=int(stats.get("recovery_timeout", 0) or 0),
+                failure_threshold=int(stats.get("failure_threshold", 0) or 0),
+                total_success_count=total_success,
+                total_failure_count=total_failure,
+            )
         )
-    result.sort(key=lambda item: item["provider_id"])
+    result.sort(key=lambda item: item.provider_id)
     return result
 
 
@@ -106,7 +112,7 @@ async def get_audit_logs(
     action: Optional[str] = Query(default=None),
     resource: Optional[str] = Query(default=None),
     current_admin: dict = Depends(get_current_admin),
-):
+) -> list[AuditTrailLogEntry]:
     """Возвращает audit trail (только для admin)."""
     _ = current_admin
     storage = _get_audit_storage(request)
@@ -132,7 +138,7 @@ async def get_dead_letter_queue(
     status: Optional[str] = Query(default=None),
     agent_type: Optional[str] = Query(default=None),
     current_admin: dict = Depends(get_current_admin),
-):
+) -> list[DeadLetterQueueEntryResponse]:
     """Возвращает записи Dead Letter Queue (admin only)."""
     _ = current_admin
     storage = _get_dead_letter_queue_storage(request)
@@ -140,13 +146,13 @@ async def get_dead_letter_queue(
     return [DeadLetterQueueEntryResponse(**row) for row in rows]
 
 
-@router.post("/dead-letter-queue/{task_id}/retry")
+@router.post("/dead-letter-queue/{task_id}/retry", response_model=DeadLetterQueueRetryResponse)
 async def retry_dead_letter_task(
     task_id: str,
     payload: DeadLetterQueueRetryRequest,
     request: Request,
     current_admin: dict = Depends(get_current_admin),
-):
+) -> DeadLetterQueueRetryResponse:
     """Пробует повторно выполнить задачу из DLQ."""
     _ = current_admin
     storage = _get_dead_letter_queue_storage(request)
@@ -196,13 +202,13 @@ async def retry_dead_letter_task(
         status="retry_success" if is_success else "retry_failed",
         retry_count=retry_count,
     )
-    return {
-        "task_id": task_id,
-        "retry_task_id": retry_task_id,
-        "retry_count": retry_count,
-        "success": is_success,
-        "result": result,
-    }
+    return DeadLetterQueueRetryResponse(
+        task_id=task_id,
+        retry_task_id=retry_task_id,
+        retry_count=retry_count,
+        success=is_success,
+        result=result,
+    )
 
 
 @router.post(
@@ -214,7 +220,7 @@ async def mark_dead_letter_manual_fix(
     payload: DeadLetterQueueManualFixRequest,
     request: Request,
     current_admin: dict = Depends(get_current_admin),
-):
+) -> DeadLetterQueueEntryResponse:
     """Помечает DLQ-задачу как исправленную вручную."""
     _ = current_admin
     storage = _get_dead_letter_queue_storage(request)
@@ -227,15 +233,15 @@ async def mark_dead_letter_manual_fix(
     return DeadLetterQueueEntryResponse(**row)
 
 
-@router.get("/circuit-breakers")
+@router.get("/circuit-breakers", response_model=CircuitBreakersResponse)
 async def get_circuit_breakers(
     request: Request,
     current_admin: dict = Depends(get_current_admin),
-):
+) -> CircuitBreakersResponse:
     """Статус всех circuit breakers + история состояний."""
     _ = current_admin
     breakers = _collect_circuit_breaker_stats(request)
-    validated = [CircuitBreakerStatsResponse(**item).model_dump() for item in breakers]
+    validated = breakers
 
     history = getattr(request.app.state, "circuit_breaker_history", [])
     if not isinstance(history, list):
@@ -243,21 +249,22 @@ async def get_circuit_breakers(
     history.append(
         {
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "states": {item["provider_id"]: item["state"] for item in validated},
+            "states": {item.provider_id: item.state for item in validated},
         }
     )
     history = history[-500:]
     request.app.state.circuit_breaker_history = history
 
-    return {"breakers": validated, "history": history}
+    history_models = [CircuitBreakerHistoryEntry(**item) for item in history]
+    return CircuitBreakersResponse(breakers=validated, history=history_models)
 
 
-@router.post("/circuit-breakers/{provider_id}/reset")
+@router.post("/circuit-breakers/{provider_id}/reset", response_model=CircuitBreakerResetResponse)
 async def reset_circuit_breaker(
     provider_id: str,
     request: Request,
     current_admin: dict = Depends(get_current_admin),
-):
+) -> CircuitBreakerResetResponse:
     """Ручной reset circuit breaker."""
     _ = current_admin
     llm_router = getattr(request.app.state, "llm_router", None)
@@ -270,16 +277,16 @@ async def reset_circuit_breaker(
     if not hasattr(breaker, "reset") or not callable(breaker.reset):
         raise HTTPException(status_code=500, detail="Circuit breaker reset is not supported")
     breaker.reset()
-    return {"provider_id": provider_id, "status": "reset"}
+    return CircuitBreakerResetResponse(provider_id=provider_id, status="reset")
 
 
-@router.get("/error-analytics")
+@router.get("/error-analytics", response_model=ErrorAnalyticsResponse)
 async def get_error_analytics(
     request: Request,
     window_minutes: int = Query(default=60, ge=1, le=1440),
     top_sources_limit: int = Query(default=10, ge=1, le=100),
     current_admin: dict = Depends(get_current_admin),
-):
+) -> ErrorAnalyticsResponse:
     """Возвращает агрегированную аналитику ошибок."""
     _ = current_admin
     storage = _get_error_analytics_storage(request)
@@ -297,21 +304,50 @@ async def get_error_analytics(
         except Exception:
             metrics_context = {}
 
-    return storage.build_analytics_snapshot(
+    snapshot = storage.build_analytics_snapshot(
         window_minutes=window_minutes,
         top_sources_limit=top_sources_limit,
         metrics_context=metrics_context,
     )
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+    return ErrorAnalyticsResponse(
+        error_rate_by_type=(
+            snapshot.get("error_rate_by_type", {})
+            if isinstance(snapshot.get("error_rate_by_type"), dict)
+            else {}
+        ),
+        top_error_sources=(
+            snapshot.get("top_error_sources", [])
+            if isinstance(snapshot.get("top_error_sources"), list)
+            else []
+        ),
+        correlation=snapshot.get("correlation", {}) if isinstance(snapshot.get("correlation"), dict) else {},
+        recent_events=(
+            snapshot.get("recent_events", [])
+            if isinstance(snapshot.get("recent_events"), list)
+            else []
+        ),
+    )
 
 
-@router.get("/memory-stats")
+@router.get("/memory-stats", response_model=MemoryStatsResponse)
 async def get_memory_stats(
     request: Request,
     refresh: bool = Query(default=True),
     history_limit: int = Query(default=60, ge=1, le=1000),
     current_admin: dict = Depends(get_current_admin),
-):
+) -> MemoryStatsResponse:
     """Возвращает runtime memory profiling + leak detection отчёт."""
     _ = current_admin
     profiler = _get_memory_profiler(request)
-    return profiler.get_stats(refresh=refresh, history_limit=history_limit)
+    stats = profiler.get_stats(refresh=refresh, history_limit=history_limit)
+    if not isinstance(stats, dict):
+        stats = {}
+    return MemoryStatsResponse(
+        current=stats.get("current", {}) if isinstance(stats.get("current"), dict) else {},
+        history=stats.get("history", []) if isinstance(stats.get("history"), list) else [],
+        history_size=int(stats.get("history_size", 0) or 0),
+        leak_policy=stats.get("leak_policy", {}) if isinstance(stats.get("leak_policy"), dict) else {},
+        monitoring_active=bool(stats.get("monitoring_active", False)),
+    )

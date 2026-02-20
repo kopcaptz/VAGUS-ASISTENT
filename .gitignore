@@ -31,10 +31,28 @@ ENV/
 *.swp
 *.swo
 
-# Environment
+# Environment — never commit secrets
 .env
 .env.local
 .env.*.local
+.env.production
+.env.staging
+
+# Configs with real values — only *.example goes to git
+configs/vagus.yaml
+configs/windows.yaml
+configs/telegram_test.yaml
+# Allow .example templates:
+!configs/*.example.yaml
+
+# Vagus encrypted key store
+.vagus/
+*.enc
+*.keys_master*
+
+# Backup files
+*.bak
+*.legacy.*
 
 # Testing
 .pytest_cache/

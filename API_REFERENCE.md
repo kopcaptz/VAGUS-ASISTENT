@@ -80,6 +80,209 @@ Response (пример):
 }
 ```
 
+## Plugin marketplace & search (admin only)
+
+### `GET /api/v1/plugins/marketplace/search?q=<query>&category=<category>&limit=<n>`
+
+Поиск плагинов в marketplace (с кэшированием и offline fallback):
+
+```json
+[
+  {
+    "plugin_id": "marketplace-demo",
+    "name": "Marketplace Demo",
+    "description": "Plugin description",
+    "category": "automation",
+    "author": "Marketplace Team",
+    "latest_version": "1.2.3",
+    "download_url": "https://plugins.example/plugin.zip",
+    "avg_rating": 4.8,
+    "review_count": 120
+  }
+]
+```
+
+### `GET /api/v1/plugins/marketplace/categories`
+
+Возвращает список категорий marketplace:
+
+```json
+["automation", "ai", "monitoring"]
+```
+
+### `GET /api/v1/plugins/marketplace/trending?limit=10`
+
+Возвращает популярные (trending) плагины в формате, аналогичном search.
+
+### `GET /api/v1/plugins/marketplace/{plugin_id}`
+
+Детальная карточка плагина:
+
+```json
+{
+  "plugin_id": "marketplace-demo",
+  "name": "Marketplace Demo",
+  "metadata": {"downloads": 1024},
+  "versions": [{"version": "1.2.3"}],
+  "reviews": [{"rating": 5, "review": "Great plugin"}]
+}
+```
+
+### `POST /api/v1/plugins/marketplace/{plugin_id}/install`
+
+Установка plugin_id напрямую из marketplace.
+
+Body (optional):
+
+```json
+{
+  "version": "1.2.3"
+}
+```
+
+### `GET /api/v1/plugins/{plugin_name}/dependencies`
+
+Dependency view для установленного плагина:
+
+```json
+{
+  "plugin_name": "main-plugin",
+  "dependencies": ["dep-plugin>=2.0.0"],
+  "install_order": ["dep-plugin", "main-plugin"],
+  "graph": {"main-plugin": ["dep-plugin"], "dep-plugin": []},
+  "edges": [{"source": "main-plugin", "target": "dep-plugin"}],
+  "conflicts": {"dep-plugin": [">=2.0.0"]},
+  "missing_dependencies": []
+}
+```
+
+### `GET /api/v1/plugins/statistics`
+
+Агрегированная статистика по installed/plugins/trending:
+
+```json
+{
+  "summary": {
+    "installed_total": 5,
+    "enabled_total": 4,
+    "disabled_total": 1,
+    "error_total": 0,
+    "marketplace_offline_mode": false
+  },
+  "popularity": [],
+  "trending": []
+}
+```
+
+## Plugin Dependency Management (admin only)
+
+### `GET /api/v1/plugins/{plugin_name}/dependencies/conflicts`
+
+Возвращает конфликтные зависимости + health checks + рекомендации:
+
+```json
+{
+  "plugin_name": "main-plugin",
+  "conflicts": {"pip": [">=1000.0"]},
+  "missing_dependencies": [],
+  "health_checks": [
+    {
+      "dependency_name": "pip",
+      "required_spec": ">=1000.0",
+      "installed_version": "24.0",
+      "available": true,
+      "compatible": false,
+      "status": "conflict",
+      "recommendation": "Align 'pip' to required spec '>=1000.0' (currently '24.0')."
+    }
+  ],
+  "recommendations": ["Resolve 'pip' with compatible spec: >=1000.0"],
+  "lock_file_path": "/.../requirements.txt",
+  "lock_content": "pip>=1000.0\n"
+}
+```
+
+### `POST /api/v1/plugins/{plugin_name}/dependencies/resolve`
+
+Автоматическое разрешение конфликтов:
+
+```json
+{
+  "strategy": "prefer-installed",
+  "dry_run": false,
+  "pin_versions": true,
+  "export_lock": true
+}
+```
+
+### `POST /api/v1/plugins/{plugin_name}/dependencies/update`
+
+Ручное обновление dependency spec и import/export lock:
+
+```json
+{
+  "updates": {"requests": ">=2.31.0"},
+  "pin_versions": false,
+  "dry_run": false,
+  "export_lock": true
+}
+```
+
+### `POST /api/v1/plugins/dependencies/bulk-update`
+
+Массовое обновление зависимостей с rollback:
+
+```json
+{
+  "operations": [
+    {"plugin_name": "plugin-a", "updates": {"requests": "==2.31.0"}, "pin_versions": true}
+  ],
+  "dry_run": false,
+  "rollback_on_error": true,
+  "allow_conflicts": false,
+  "export_lock": true
+}
+```
+
+## Plugin Hot-Reload & Monitoring (admin only)
+
+### `GET /api/v1/plugins/hot-reload/status`
+
+Возвращает runtime статус hot-reload, health/performance snapshot и alerts.
+
+### `POST /api/v1/plugins/hot-reload/enable`
+
+Включает file watcher для hot-reload.
+
+### `POST /api/v1/plugins/hot-reload/disable`
+
+Выключает file watcher.
+
+### `GET /api/v1/plugins/hot-reload/logs`
+
+Query params:
+
+- `limit` (1..1000)
+- `plugin_name` (optional)
+- `event_type` (optional)
+
+### `GET /api/v1/plugins/{plugin_name}/reload-history`
+
+История reload событий конкретного плагина.
+
+### `POST /api/v1/plugins/{plugin_name}/reload-now`
+
+Принудительная перезагрузка плагина.
+
+### `WS /api/v1/plugins/ws/updates?token=<admin_access_token>`
+
+Real-time stream событий мониторинга:
+
+- `connection_ack`
+- `status_snapshot`
+- `hot_reload_event`
+- `plugin_alert`
+
 ## WebSocket stream
 
 - Endpoint: `WS /api/v1/tasks/ws/{task_id}?token=<access_token>`

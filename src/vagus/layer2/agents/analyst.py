@@ -3,9 +3,11 @@ AnalystAgent — агент для анализа данных, статисти
 Использует LLMRouter для аналитических запросов.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
+from ..types import AgentContext, AgentResult, AgentTask
 from .base_agent import BaseAgent
+from .protocols import LLMRouterProtocol
 
 
 class AnalystAgent(BaseAgent):
@@ -17,7 +19,7 @@ class AnalystAgent(BaseAgent):
 
     def __init__(
         self,
-        llm_router: Any,
+        llm_router: LLMRouterProtocol,
         description: str = "Агент для анализа данных, статистики и формирования выводов",
     ):
         super().__init__(name="analyst", llm_router=llm_router, description=description)
@@ -29,9 +31,9 @@ class AnalystAgent(BaseAgent):
 
     async def process(
         self,
-        task: Dict[str, Any],
-        context: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        task: AgentTask,
+        context: Optional[AgentContext] = None,
+    ) -> AgentResult:
         """
         Анализирует данные/запрос через LLMRouter.
         Контекст предыдущих шагов передаётся в prompt при наличии.
@@ -48,7 +50,7 @@ class AnalystAgent(BaseAgent):
             "metadata": {"agent": "analyst", "task_type": task.get("task_type", "analysis")},
         }
 
-    def _build_analysis_prompt(self, user_prompt: str, context: Dict[str, Any]) -> str:
+    def _build_analysis_prompt(self, user_prompt: str, context: AgentContext) -> str:
         """Формирует промпт для аналитического запроса к LLM."""
         parts = ["Запрос на анализ:", user_prompt]
         if context:

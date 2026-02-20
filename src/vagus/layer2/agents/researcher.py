@@ -3,10 +3,12 @@ ResearcherAgent — агент для поиска информации.
 Использует SkillSystem (search_web) и LLMRouter для синтеза ответа.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from ..skills import SkillSystem
+from ..types import AgentContext, AgentResult, AgentTask
 from .base_agent import BaseAgent
+from .protocols import LLMRouterProtocol
 
 
 class ResearcherAgent(BaseAgent):
@@ -18,7 +20,7 @@ class ResearcherAgent(BaseAgent):
 
     def __init__(
         self,
-        llm_router: Any,
+        llm_router: LLMRouterProtocol,
         skill_system: Optional[SkillSystem] = None,
         description: str = "Агент для поиска и анализа информации",
     ):
@@ -32,9 +34,9 @@ class ResearcherAgent(BaseAgent):
 
     async def process(
         self,
-        task: Dict[str, Any],
-        context: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        task: AgentTask,
+        context: Optional[AgentContext] = None,
+    ) -> AgentResult:
         """
         1. Вызывает search_web с запросом из prompt
         2. Передаёт результаты в LLM для синтеза ответа

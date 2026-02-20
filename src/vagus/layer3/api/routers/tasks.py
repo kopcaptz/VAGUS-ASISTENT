@@ -8,7 +8,7 @@ import time
 import uuid
 from collections import deque
 from datetime import datetime, timezone
-from typing import Deque, Dict, Optional
+from typing import Any, Deque, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 
@@ -419,7 +419,7 @@ async def create_task(
     request: TaskCreateRequest,
     orchestrator=Depends(get_orchestrator),
     current_user: dict = Depends(get_current_user),
-):
+) -> TaskCreateResponse:
     """Создаёт задачу и запускает выполнение в фоне."""
     task_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
@@ -448,7 +448,7 @@ async def create_task(
     )
 
 
-async def _run_task(task_id: str, request: TaskCreateRequest, orchestrator, app=None):
+async def _run_task(task_id: str, request: TaskCreateRequest, orchestrator, app=None) -> None:
     """Фоновое выполнение задачи."""
     task_store[task_id]["status"] = TaskStatus.IN_PROGRESS
     task_store[task_id]["updated_at"] = datetime.now(timezone.utc)
@@ -513,7 +513,7 @@ async def _run_task(task_id: str, request: TaskCreateRequest, orchestrator, app=
 async def get_task_status(
     task_id: str,
     current_user: dict = Depends(get_current_user),
-):
+) -> TaskStatusResponse:
     """Возвращает статус и результат задачи."""
     task = task_store.get(task_id)
     if not task:
@@ -525,7 +525,7 @@ async def get_task_status(
 async def list_tasks(
     limit: int = Query(default=20, ge=1, le=100),
     current_user: dict = Depends(get_current_user),
-):
+) -> list[TaskListItem]:
     """Список задач текущего пользователя."""
     user = current_user.get("sub", "")
     user_tasks = [
@@ -546,7 +546,7 @@ async def list_tasks(
 async def cancel_task(
     task_id: str,
     current_user: dict = Depends(get_current_user),
-):
+) -> None:
     """Отменяет задачу (помечает как FAILED)."""
     task = task_store.get(task_id)
     if not task:
@@ -559,7 +559,7 @@ async def cancel_task(
 
 
 @router.websocket("/ws/{task_id}")
-async def stream_task_result(websocket: WebSocket, task_id: str):
+async def stream_task_result(websocket: WebSocket, task_id: str) -> None:
     """WebSocket для стриминга результата задачи с hardening-механизмами."""
     await websocket.accept()
     increment_websocket_connections()
@@ -743,7 +743,7 @@ async def get_websocket_audit_log(
     user_id: Optional[str] = Query(default=None),
     event_type: Optional[str] = Query(default=None),
     current_user: dict = Depends(get_current_user),
-):
+) -> list[WebSocketAuditLogEntry]:
     """Возвращает audit log WebSocket-событий (только для admin)."""
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")

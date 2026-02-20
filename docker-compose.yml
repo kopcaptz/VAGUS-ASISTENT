@@ -22,6 +22,26 @@ services:
       timeout: 5s
       retries: 3
 
+  marketplace:
+    build:
+      context: .
+      target: api
+    command:
+      - python
+      - -m
+      - uvicorn
+      - src.vagus.plugins.marketplace.api_server:create_marketplace_app
+      - --factory
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8010"
+    ports:
+      - "8010:8010"
+    environment:
+      - PYTHONPATH=/app/src
+    restart: unless-stopped
+
   dashboard:
     build:
       context: .
@@ -32,6 +52,7 @@ services:
       - VAGUS_API_URL=http://api:8000
     depends_on:
       - api
+      - marketplace
     restart: unless-stopped
 
   telegram-bot:

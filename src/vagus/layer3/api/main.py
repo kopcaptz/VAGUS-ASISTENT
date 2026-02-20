@@ -4,6 +4,7 @@ FastAPI приложение — точка входа REST API Vagus Asistent.
 
 import time
 from contextlib import asynccontextmanager
+import os
 from pathlib import Path
 from typing import Any, Optional
 
@@ -14,6 +15,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from vagus.layer0.logging import get_logger
 from vagus.monitoring.memory_profiler import MemoryLeakPolicy, MemoryProfiler
+from vagus.monitoring.alerting import AlertingService
+from vagus.security import KeyAlertConfig, KeyAlertManager, KeyManager
 from vagus.logging import StructuredLoggingMiddleware, configure_structured_logging
 
 from .audit.audit_trail import AuditTrail
@@ -26,7 +29,7 @@ from .middleware import (
     RequestSigningMiddleware,
 )
 from .metrics import HTTPMetricsMiddleware, metrics_router
-from .routers import admin_router, agents_router, auth_router, status_router, tasks_router
+from .routers import admin_router, agents_router, auth_router, keys_router, plugins_router, status_router, tasks_router
 from .websocket_security import WebSocketAuditStorage, WebSocketRuntimeSettings
 
 logger = get_logger("layer3.api.main")
@@ -113,8 +116,17 @@ def _safe_string_list(value: Any) -> list[str]:
 
 
 def _load_runtime_yaml_config() -> tuple[dict[str, Any], Optional[Path]]:
-    config_candidates = [Path("configs/vagus.yaml"), Path("configs/vagus.yaml.example")]
+    config_candidates: list[Path] = []
+    override_config_path = os.getenv("VAGUS_CONFIG_PATH")
+    if override_config_path:
+        config_candidates.append(Path(override_config_path))
+
+    config_candidates.extend([Path("configs/vagus.yaml"), Path("configs/vagus.yaml.example")])
+    seen_paths: set[Path] = set()
     for config_path in config_candidates:
+        if config_path in seen_paths:
+            continue
+        seen_paths.add(config_path)
         if not config_path.exists():
             continue
         try:
@@ -235,6 +247,24 @@ def _load_memory_profiler_settings(config_data: dict[str, Any]) -> dict[str, Any
     }
 
 
+def _load_key_alert_settings(config_data: dict[str, Any]) -> dict[str, Any]:
+    monitoring_cfg = config_data.get("monitoring", {}) if isinstance(config_data, dict) else {}
+    if not isinstance(monitoring_cfg, dict):
+        monitoring_cfg = {}
+    alert_cfg = monitoring_cfg.get("key_alerts", {})
+    if not isinstance(alert_cfg, dict):
+        alert_cfg = {}
+    return {
+        "enabled": _safe_bool(alert_cfg.get("enabled"), False),
+        "interval_seconds": _safe_int(alert_cfg.get("interval_seconds"), 21600, min_value=60),
+        "expiring_days_threshold": _safe_int(alert_cfg.get("expiring_days_threshold"), 7, min_value=1),
+        "throttle_seconds": _safe_int(alert_cfg.get("throttle_seconds"), 3600, min_value=60),
+        "escalation_warnings": _safe_int(alert_cfg.get("escalation_warnings"), 3, min_value=2),
+        "alerting_config_path": str(alert_cfg.get("alerting_config_path", "configs/telegram_test.yaml")),
+        "watch_interval_seconds": _safe_int(alert_cfg.get("watch_interval_seconds"), 5, min_value=1),
+    }
+
+
 def _load_cluster_settings(config_data: dict[str, Any]) -> dict[str, Any]:
     layer2_cfg = config_data.get("layer2", {}) if isinstance(config_data, dict) else {}
     if not isinstance(layer2_cfg, dict):
@@ -262,6 +292,20 @@ def _load_cluster_settings(config_data: dict[str, Any]) -> dict[str, Any]:
             "redis_url": lock_cfg.get("redis_url"),
             "lock_ttl_seconds": _safe_int(lock_cfg.get("lock_ttl_seconds"), 900),
         },
+    }
+
+
+def _load_key_backup_settings(config_data: dict[str, Any]) -> dict[str, Any]:
+    backup_cfg = config_data.get("key_backup", {}) if isinstance(config_data, dict) else {}
+    if not isinstance(backup_cfg, dict):
+        backup_cfg = {}
+    return {
+        "enabled": _safe_bool(backup_cfg.get("enabled"), False),
+        "schedule": str(backup_cfg.get("schedule", "0 2 * * *")),
+        "retention_days": _safe_int(backup_cfg.get("retention_days"), 7, min_value=1),
+        "encryption_password": backup_cfg.get("encryption_password"),
+        "backup_dir": str(backup_cfg.get("backup_dir", "~/.vagus/backups")),
+        "max_backups": _safe_int(backup_cfg.get("max_backups"), 10, min_value=1),
     }
 
 
@@ -312,6 +356,37 @@ async def lifespan(app: FastAPI):
         await app.state.memory_profiler.start(
             interval_seconds=int(memory_settings.get("interval_seconds", 30))
         )
+    app.state.key_manager = KeyManager()
+    app.state.key_manager.watch_for_changes(
+        interval_seconds=float(getattr(app.state, "key_alert_settings", {}).get("watch_interval_seconds", 5))
+    )
+    key_alert_settings = getattr(app.state, "key_alert_settings", {}) or {}
+    key_backup_settings = getattr(app.state, "key_backup_settings", {}) or {}
+    if bool(key_alert_settings.get("enabled", False)) or bool(key_backup_settings.get("enabled", False)):
+        try:
+            alerting_service = None
+            if bool(key_alert_settings.get("enabled", False)):
+                alerting_service = AlertingService.from_yaml(str(key_alert_settings.get("alerting_config_path")))
+            app.state.key_alert_manager = KeyAlertManager(
+                key_manager=app.state.key_manager,
+                alerting_service=alerting_service,
+                config=KeyAlertConfig(
+                    enabled=bool(key_alert_settings.get("enabled", False)),
+                    interval_seconds=int(key_alert_settings.get("interval_seconds", 21600)),
+                    expiring_days_threshold=int(key_alert_settings.get("expiring_days_threshold", 7)),
+                    throttle_seconds=int(key_alert_settings.get("throttle_seconds", 3600)),
+                    escalation_warnings=int(key_alert_settings.get("escalation_warnings", 3)),
+                    backup_enabled=bool(key_backup_settings.get("enabled", False)),
+                    backup_schedule=str(key_backup_settings.get("schedule", "0 2 * * *")),
+                    backup_retention_days=int(key_backup_settings.get("retention_days", 7)),
+                    backup_encryption_password=key_backup_settings.get("encryption_password"),
+                    backup_dir=str(key_backup_settings.get("backup_dir", "~/.vagus/backups")),
+                    backup_max_backups=int(key_backup_settings.get("max_backups", 10)),
+                ),
+            )
+            await app.state.key_alert_manager.start()
+        except Exception as exc:
+            logger.warning("Failed to initialize key alert manager: %s", exc)
     app.state.audit_trail.log_action(
         user_id="system",
         action="config.loaded",
@@ -336,6 +411,21 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("Failed to stop memory profiler: %s", exc)
     try:
+        if hasattr(app.state, "key_alert_manager"):
+            await app.state.key_alert_manager.stop()
+    except Exception as exc:
+        logger.warning("Failed to stop key alert manager: %s", exc)
+    try:
+        if hasattr(app.state, "key_manager"):
+            if hasattr(llm_router, "_on_key_change"):
+                try:
+                    app.state.key_manager.remove_listener(llm_router._on_key_change)
+                except Exception:
+                    pass
+            app.state.key_manager.stop_watching()
+    except Exception as exc:
+        logger.warning("Failed to stop key watcher: %s", exc)
+    try:
         if hasattr(llm_router, "cache") and hasattr(llm_router.cache, "close"):
             await llm_router.cache.close()
     except Exception as exc:
@@ -356,6 +446,8 @@ def create_app() -> FastAPI:
     jwt_settings = _load_jwt_settings(runtime_config)
     secrets_settings = _load_secrets_settings(runtime_config)
     memory_profiler_settings = _load_memory_profiler_settings(runtime_config)
+    key_alert_settings = _load_key_alert_settings(runtime_config)
+    key_backup_settings = _load_key_backup_settings(runtime_config)
     cluster_settings = _load_cluster_settings(runtime_config)
     health_thresholds = load_health_thresholds(runtime_config)
     configure_jwt_secret_rotation(
@@ -412,6 +504,8 @@ def create_app() -> FastAPI:
     app.include_router(agents_router, prefix="/api/v1")
     app.include_router(status_router, prefix="/api/v1")
     app.include_router(admin_router, prefix="/api/v1")
+    app.include_router(plugins_router, prefix="/api/v1")
+    app.include_router(keys_router, prefix="/api/v1")
     app.include_router(metrics_router)
     app.include_router(health_router)
 
@@ -420,6 +514,8 @@ def create_app() -> FastAPI:
     app.state.jwt_settings = jwt_settings
     app.state.secrets_settings = secrets_settings
     app.state.memory_profiler_settings = memory_profiler_settings
+    app.state.key_alert_settings = key_alert_settings
+    app.state.key_backup_settings = key_backup_settings
     app.state.cluster_settings = cluster_settings
     app.state.health_thresholds = health_thresholds
     app.state.runtime_config = runtime_config

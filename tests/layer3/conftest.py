@@ -66,6 +66,8 @@ def app(tmp_path):
         admin_router,
         agents_router,
         auth_router,
+        keys_router,
+        plugins_router,
         status_router,
         tasks_router,
     )
@@ -80,6 +82,8 @@ def app(tmp_path):
     test_app.include_router(agents_router, prefix="/api/v1")
     test_app.include_router(status_router, prefix="/api/v1")
     test_app.include_router(admin_router, prefix="/api/v1")
+    test_app.include_router(plugins_router, prefix="/api/v1")
+    test_app.include_router(keys_router, prefix="/api/v1")
     test_app.include_router(metrics_router)
     test_app.include_router(health_router)
 

@@ -16,7 +16,7 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
 @router.post("/token", response_model=TokenResponse)
-async def login(request: TokenRequest):
+async def login(request: TokenRequest) -> TokenResponse:
     """Аутентификация по логину/паролю. Возвращает access + refresh токены."""
     user_data = authenticate_user(request.username, request.password)
     if user_data is None:
@@ -32,7 +32,7 @@ async def login(request: TokenRequest):
 
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh(request: RefreshTokenRequest):
+async def refresh(request: RefreshTokenRequest) -> TokenResponse:
     """Обновление access_token с помощью refresh_token."""
     payload = decode_refresh_token(request.refresh_token)
     if payload is None:

@@ -7,7 +7,9 @@ import re
 from typing import Any, Dict, Optional
 
 from ..skills import SkillSystem
+from ..types import AgentContext, AgentResult, AgentTask
 from .base_agent import BaseAgent
+from .protocols import LLMRouterProtocol
 
 
 class CoderAgent(BaseAgent):
@@ -19,7 +21,7 @@ class CoderAgent(BaseAgent):
 
     def __init__(
         self,
-        llm_router: Any,
+        llm_router: LLMRouterProtocol,
         skill_system: Optional[SkillSystem] = None,
         description: str = "Агент для генерации и выполнения Python-кода",
     ):
@@ -35,9 +37,9 @@ class CoderAgent(BaseAgent):
         self,
         task_id_or_task: Any,
         prompt_or_context: Optional[Any] = None,
-        context: Optional[Dict[str, Any]] = None,
+        context: Optional[AgentContext] = None,
         **kwargs: Any,
-    ) -> Dict[str, Any]:
+    ) -> AgentResult:
         """
         1. Генерация кода через llm_router.route_request()
         2. Извлечение кода из ответа (_extract_code)
@@ -60,7 +62,7 @@ class CoderAgent(BaseAgent):
             task = task_id_or_task
             context = context or prompt_or_context
         else:
-            task = {
+            task: AgentTask = {
                 "task_id": task_id_or_task,
                 "prompt": prompt_or_context or "",
                 **kwargs,

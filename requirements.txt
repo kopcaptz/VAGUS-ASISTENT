@@ -22,6 +22,8 @@ rich>=13.0
 
 # Layer 3: Dashboard (optional)
 # pip install streamlit>=1.30
+# UI smoke testing (optional)
+# pip install playwright>=1.46
 
 # Layer 3: Telegram Bot (optional)
 # pip install aiogram>=3.0
@@ -29,6 +31,7 @@ rich>=13.0
 # Testing
 pytest>=7.0
 pytest-asyncio>=0.21
+psutil>=5.9
 
 # Plugin security
 cryptography>=41.0

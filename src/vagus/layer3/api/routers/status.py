@@ -18,7 +18,7 @@ async def get_system_status(
     request: Request,
     orchestrator=Depends(get_orchestrator),
     current_user: dict = Depends(get_current_user),
-):
+) -> SystemStatusResponse:
     """Возвращает общее состояние системы."""
     start_time = getattr(request.app.state, "start_time", time.monotonic())
     llm_router = getattr(request.app.state, "llm_router", None)

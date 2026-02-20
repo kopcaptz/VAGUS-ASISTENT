@@ -1,0 +1,32 @@
+{
+  "name": "test-plugin",
+  "version": "1.0.0",
+  "author": "Plugin Author",
+  "description": "basic template for Vagus plugin",
+  "dependencies": [],
+  "python_version": ">=3.10",
+  "vagus_version": ">=0.1.0",
+  "entry_point": "plugin:Plugin",
+  "hooks": [
+    {
+      "name": "on_message_received",
+      "priority": 50,
+      "callback": "Plugin.on_message_received",
+      "is_async": false
+    }
+  ],
+  "permissions": [],
+  "runtime_permissions": {
+    "level": "READ",
+    "filesystem": {
+      "read": [
+        "./data"
+      ],
+      "write": []
+    },
+    "network": [],
+    "environment_variables": [],
+    "max_memory_mb": 256,
+    "max_execution_time_seconds": 30
+  }
+}

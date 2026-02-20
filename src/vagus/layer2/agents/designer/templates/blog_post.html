@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{title}}</title>
+  <style>
+    :root { --primary: {{primary_color}}; }
+    body { margin: 0; font-family: "Segoe UI", Arial, sans-serif; background: #fafafa; color: #212121; }
+    .topbar { background: var(--primary); color: #fff; padding: 16px 20px; }
+    .layout { max-width: 980px; margin: 0 auto; padding: 24px 20px; display: grid; grid-template-columns: 1fr 280px; gap: 20px; }
+    article, aside { background: #fff; border-radius: 10px; padding: 20px; }
+    h1, h2 { margin-top: 0; }
+    .chip { display: inline-block; background: #e3f2fd; color: #0d47a1; border-radius: 999px; padding: 4px 10px; font-size: 12px; }
+    @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header class="topbar">{{heading}}</header>
+  <div class="layout">
+    <article>
+      <span class="chip">Material style</span>
+      <h1>{{subheading}}</h1>
+      <p>{{body_text}}</p>
+    </article>
+    <aside>
+      <h2>Related posts</h2>
+      <p>Design tokens</p>
+      <p>Accessible typography</p>
+    </aside>
+  </div>
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      console.log("blog template ready");
+    });
+  </script>
+</body>
+</html>

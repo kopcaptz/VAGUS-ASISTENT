@@ -5,9 +5,11 @@
 from typing import Any, Optional
 
 from .communication import CommunicationLayer
+from .agent_registry import AgentRegistry
 from .agents.base_agent import BaseAgent
 from .agents.analyst import AnalystAgent
 from .agents.coder import CoderAgent
+from .agents.designer_agent import DesignerAgent
 from .agents.researcher import ResearcherAgent
 from .dead_letter_queue import DeadLetterQueueStorage
 from .memory import EpisodicMemory, SemanticMemory
@@ -56,6 +58,8 @@ def create_orchestrator_full(
     memory = EpisodicMemory()
     semantic_memory = SemanticMemory()
     skill_system = SkillSystem()
+    from ..plugins import PluginManager
+
     orchestrator = TaskOrchestrator(
         communication=communication,
         memory=memory,
@@ -69,15 +73,23 @@ def create_orchestrator_full(
     orchestrator.register_agent(ResearcherAgent(llm_router=llm_router, skill_system=skill_system))
     orchestrator.register_agent(CoderAgent(llm_router=llm_router, skill_system=skill_system))
     orchestrator.register_agent(AnalystAgent(llm_router=llm_router))
+    orchestrator.register_agent(
+        DesignerAgent(
+            llm_router=llm_router,
+            plugin_manager=PluginManager(),
+        )
+    )
     return orchestrator
 
 
 __all__ = [
     "AnalystAgent",
+    "AgentRegistry",
     "CommunicationLayer",
     "BaseAgent",
     "CoderAgent",
     "DeadLetterQueueStorage",
+    "DesignerAgent",
     "EpisodicMemory",
     "ResearcherAgent",
     "SemanticMemory",

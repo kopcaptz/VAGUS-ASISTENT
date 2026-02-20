@@ -1,0 +1,78 @@
+# =============================================================================
+# Vagus Asistent — шаблон конфигурации
+# =============================================================================
+# Скопируйте в configs/vagus.yaml и настройте под своё окружение:
+#   copy configs\vagus.example.yaml configs\vagus.yaml
+#
+# ВАЖНО: configs/vagus.yaml может содержать чувствительные данные —
+#         он добавлен в .gitignore.
+# =============================================================================
+version: 1
+name: Vagus Asistent
+
+global:
+  default_model: gpt-4o-mini
+  log_level: INFO
+  workspace_path: ./workspace
+  max_concurrent_requests: 10
+  api_timeout: 30
+
+server:
+  api:
+    host: 127.0.0.1
+    port: 8000
+  dashboard:
+    host: 0.0.0.0
+    port: 8501
+  marketplace:
+    host: 127.0.0.1
+    port: 8010
+
+plugins:
+  enabled: true
+  auto_discover: true
+  scan_directories:
+    - "./plugins"
+    - "~/.vagus/plugins"
+  sandbox:
+    enabled: false          # true только на Linux (Unix resource limits)
+    memory_limit_mb: 256
+    timeout_seconds: 30
+    filesystem_whitelist:
+      - "./data"
+    network_whitelist:
+      - "api.openai.com"
+      - "api.anthropic.com"
+  security:
+    require_signatures: false
+    trusted_keys: []
+    max_plugin_dependencies: 10
+    banned_imports:
+      - "os.system"
+      - "subprocess.Popen"
+      - "ctypes"
+  hot_reload:
+    enabled: true
+    watch_directories:
+      - "./plugins"
+      - "~/.vagus/plugins"
+    debounce_ms: 500
+  marketplace:
+    url: "https://plugins.vagus.ai"
+    cache_ttl_hours: 24
+
+monitoring:
+  memory_profiler:
+    enabled: true
+    interval_seconds: 30
+    history_limit: 1024
+    leak_threshold_mb: 100.0
+    leak_window_seconds: 300
+
+key_backup:
+  enabled: true
+  schedule: "0 2 * * *"
+  retention_days: 7
+  encryption_password: null   # опционально: пароль для резервных копий
+  backup_dir: "~/.vagus/backups"
+  max_backups: 10

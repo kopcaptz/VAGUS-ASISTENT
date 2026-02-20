@@ -24,6 +24,17 @@ def test_summarize_installed_plugins():
     assert summary["with_errors"] == 1
 
 
+def test_summarize_installed_plugins_uses_status_field():
+    summary = summarize_installed_plugins(
+        [
+            {"name": "a", "enabled": True, "status": "ENABLED"},
+            {"name": "b", "enabled": False, "status": "ERROR"},
+        ]
+    )
+    assert summary["total"] == 2
+    assert summary["with_errors"] == 1
+
+
 def test_filter_marketplace_plugins_by_query_and_category():
     plugins = [
         {"plugin_id": "alpha", "name": "Alpha Tool", "description": "utilities", "category": "utility"},

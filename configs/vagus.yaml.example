@@ -40,6 +40,14 @@ secrets:
   vault_addr: http://localhost:8200
   vault_token: ""
 
+key_backup:
+  enabled: true
+  schedule: "0 2 * * *"
+  retention_days: 7
+  encryption_password: null
+  backup_dir: "~/.vagus/backups"
+  max_backups: 10
+
 plugins:
   enabled: true
   auto_discover: true

@@ -1,0 +1,1 @@
+"""Vagus Asistent Dashboard package."""

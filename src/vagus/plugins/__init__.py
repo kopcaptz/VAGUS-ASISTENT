@@ -37,6 +37,7 @@ from .dependencies import (
 from .tools import PluginTemplateError, PluginTemplateGenerator, create_plugin_template
 from .backup import PluginBackupError, PluginBackupManager
 from .registry import PluginRegistry
+from .manager import PluginManager, PluginManagerError, PluginNotFoundError
 from .sandbox import (
     SandboxEngine,
     SandboxExecutionError,
@@ -60,6 +61,9 @@ __all__ = [
     "FilesystemPermissions",
     "LoadedPlugin",
     "PluginRegistry",
+    "PluginManager",
+    "PluginManagerError",
+    "PluginNotFoundError",
     "PluginLoaderError",
     "ManifestValidationError",
     "DependencyResolutionError",

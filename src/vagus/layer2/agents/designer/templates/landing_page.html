@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{title}}</title>
+  <style>
+    :root { --primary: {{primary_color}}; --bg: {{background_color}}; }
+    body { margin: 0; font-family: Inter, system-ui, sans-serif; background: var(--bg); color: #111827; }
+    .hero { max-width: 1080px; margin: 0 auto; padding: 64px 20px; text-align: center; }
+    .cta { display: inline-block; background: var(--primary); color: #fff; padding: 12px 20px; border-radius: 10px; text-decoration: none; }
+    .grid { max-width: 1080px; margin: 0 auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; padding: 20px; }
+    .card { background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+    @media (max-width: 1024px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } .hero { padding: 40px 16px; } }
+  </style>
+</head>
+<body>
+  <section class="hero">
+    <h1>{{heading}}</h1>
+    <p>{{subheading}}</p>
+    <a href="#" class="cta">{{cta_text}}</a>
+  </section>
+  <section class="grid">
+    <article class="card">Fast integration</article>
+    <article class="card">Accessible defaults</article>
+    <article class="card">Mobile-first layout</article>
+  </section>
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      console.log("landing page template ready");
+    });
+  </script>
+</body>
+</html>

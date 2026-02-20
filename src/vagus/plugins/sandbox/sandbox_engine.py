@@ -13,6 +13,8 @@ import socket
 import subprocess
 from typing import Any, Callable, Iterator, Optional
 
+from vagus.layer0.logging import get_logger
+
 from ..core.models import LoadedPlugin, PermissionLevel, PluginPermissions
 from .security_manager import SecurityManager, SecurityViolationError
 
@@ -20,9 +22,11 @@ try:
     import resource
 
     _RESOURCE_AVAILABLE = True
-except Exception:  # pragma: no cover - platform dependent
+except ImportError:  # pragma: no cover - platform dependent
     resource = None  # type: ignore[assignment]
     _RESOURCE_AVAILABLE = False
+
+_LOGGER = get_logger("plugins.sandbox.engine")
 
 
 class SandboxExecutionError(RuntimeError):
@@ -56,6 +60,7 @@ class SandboxEngine:
     ) -> None:
         self.policy = policy or SandboxPolicy()
         self.security_manager = security_manager or SecurityManager()
+        self._resource_warning_logged = False
 
     async def execute_async(
         self,
@@ -153,6 +158,11 @@ class SandboxEngine:
     @contextmanager
     def _apply_memory_limit(self, memory_limit_mb: int) -> Iterator[None]:
         if not _RESOURCE_AVAILABLE:
+            if not self._resource_warning_logged:
+                self._resource_warning_logged = True
+                _LOGGER.warning(
+                    "resource module not available on Windows, memory limits disabled"
+                )
             yield
             return
 

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
-import resource
+import os
 import time
 from collections import Counter, deque
 from dataclasses import dataclass
@@ -14,6 +14,22 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from vagus.layer0.logging import get_logger
+
+try:
+    import resource
+
+    _RESOURCE_AVAILABLE = True
+except ImportError:  # pragma: no cover - platform dependent
+    resource = None  # type: ignore[assignment]
+    _RESOURCE_AVAILABLE = False
+
+try:
+    import psutil
+
+    _PSUTIL_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional dependency
+    psutil = None  # type: ignore[assignment]
+    _PSUTIL_AVAILABLE = False
 
 
 @dataclass(frozen=True)
@@ -37,11 +53,56 @@ class MemoryProfiler:
         self._history: deque[dict[str, Any]] = deque(maxlen=self.history_limit)
         self._monitor_task: Optional[asyncio.Task] = None
         self._last_alert_at: float = 0.0
+        self._resource_warning_logged = False
+
+    @staticmethod
+    def _read_windows_process_memory_mb() -> float:
+        """
+        Возвращает WorkingSetSize на Windows через WinAPI.
+        """
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+                _fields_ = [
+                    ("cb", wintypes.DWORD),
+                    ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t),
+                    ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t),
+                    ("PeakPagefileUsage", ctypes.c_size_t),
+                ]
+
+            counters = PROCESS_MEMORY_COUNTERS()
+            counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
+            process_handle = ctypes.windll.kernel32.GetCurrentProcess()
+            success = ctypes.windll.psapi.GetProcessMemoryInfo(
+                process_handle,
+                ctypes.byref(counters),
+                counters.cb,
+            )
+            if success:
+                return float(counters.WorkingSetSize) / 1024.0 / 1024.0
+        except Exception:
+            return 0.0
+        return 0.0
 
     def _read_process_memory_mb(self) -> float:
         """
         Возвращает RSS процесса в MB.
         """
+        if _PSUTIL_AVAILABLE and psutil is not None:
+            try:
+                process = psutil.Process()
+                return float(process.memory_info().rss) / 1024.0 / 1024.0
+            except Exception:
+                pass
+
         status_path = "/proc/self/status"
         try:
             with open(status_path, "r", encoding="utf-8") as f:
@@ -55,13 +116,26 @@ class MemoryProfiler:
             pass
 
         # Fallback для сред без /proc
-        usage = resource.getrusage(resource.RUSAGE_SELF)
-        rss = float(usage.ru_maxrss)
-        if rss > 1024 * 1024:
-            # bytes-like units
-            return rss / 1024.0 / 1024.0
-        # KB-like units
-        return rss / 1024.0
+        if _RESOURCE_AVAILABLE and resource is not None:
+            usage = resource.getrusage(resource.RUSAGE_SELF)
+            rss = float(usage.ru_maxrss)
+            if rss > 1024 * 1024:
+                # bytes-like units
+                return rss / 1024.0 / 1024.0
+            # KB-like units
+            return rss / 1024.0
+
+        if os.name == "nt":
+            windows_memory = self._read_windows_process_memory_mb()
+            if windows_memory > 0:
+                return windows_memory
+
+        if not self._resource_warning_logged:
+            self._resource_warning_logged = True
+            self.logger.warning(
+                "resource module not available on this platform, memory metrics are degraded"
+            )
+        return 0.0
 
     def _top_object_types(self, *, limit: int = 10) -> list[dict[str, Any]]:
         try:

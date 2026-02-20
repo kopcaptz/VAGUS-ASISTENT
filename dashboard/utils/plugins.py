@@ -9,7 +9,11 @@ def summarize_installed_plugins(plugins: list[dict[str, Any]]) -> dict[str, int]
     total = len(plugins)
     enabled = sum(1 for plugin in plugins if bool(plugin.get("enabled", False)))
     disabled = total - enabled
-    with_errors = sum(1 for plugin in plugins if plugin.get("state") == "ERROR")
+    with_errors = sum(
+        1
+        for plugin in plugins
+        if str(plugin.get("status") or plugin.get("state") or "").upper() == "ERROR"
+    )
     return {
         "total": total,
         "enabled": enabled,

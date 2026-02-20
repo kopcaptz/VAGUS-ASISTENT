@@ -1,7 +1,7 @@
-"""
-LLMRouter — фасад системы, координация всех компонентов.
-"""
+"""LLMRouter — фасад системы, координация всех компонентов."""
 
+import asyncio
+import copy
 import time
 from typing import Dict, Any, Optional, AsyncGenerator
 from ..providers.base_provider import LLMProvider
@@ -16,6 +16,7 @@ from ..balancing.strategy_manager import StrategyManager
 from .request_handler import RequestHandler
 from .response_builder import ResponseBuilder
 from ...layer0.logging import get_logger
+from ...security import KeyManager
 
 try:
     from ...layer3.api.metrics import (
@@ -112,10 +113,20 @@ class LLMRouter:
         self.strategy_manager = StrategyManager()
         self.strategy_manager.set_default(default_strategy)
         self.provider_factory = ProviderFactory()
+        self.key_manager = KeyManager()
         self.request_handler = RequestHandler()
         self.response_builder = ResponseBuilder()
 
         self._providers: Dict[str, LLMProvider] = {}
+        self._providers_config: Dict[str, Dict[str, Any]] = {}
+        self._default_models: Dict[str, str] = {
+            "openai": "gpt-4o-mini",
+            "anthropic": "claude-3-5-sonnet-20241022",
+            "deepseek": "deepseek-chat",
+        }
+        self._refresh_lock = asyncio.Lock()
+        self._event_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._key_listener_registered = False
         self._fallback_chain = FallbackChain(provider_ids=fallback_chain or ["openai", "anthropic", "deepseek"])
         self._stats: Dict[str, Any] = {
             "providers_used": 0,
@@ -139,7 +150,13 @@ class LLMRouter:
         """
         if self._initialized:
             return
+        self._event_loop = asyncio.get_running_loop()
         providers_config = providers_config or {}
+        self._providers_config = {
+            pid: copy.deepcopy(pcfg)
+            for pid, pcfg in providers_config.items()
+            if isinstance(pcfg, dict)
+        }
         for pid, pcfg in providers_config.items():
             if isinstance(pcfg, dict) and pcfg.get("enabled", True):
                 try:
@@ -149,15 +166,83 @@ class LLMRouter:
                 except Exception as e:
                     self.logger.warning(f"Failed to load provider {pid}: {e}")
         if not self._providers:
-            for pid in ["openai", "anthropic", "deepseek"]:
+            for pid in self._default_models:
                 try:
-                    prov = self.provider_factory.create(pid, "gpt-4o-mini" if pid == "openai" else "claude-3-5-sonnet-20241022" if pid == "anthropic" else "deepseek-chat")
+                    prov = self.provider_factory.create(pid, self._default_models[pid])
                     if prov.is_available():
                         self._providers[pid] = prov
                 except Exception as e:
                     self.logger.debug(f"Provider {pid} not available: {e}")
+        self._ensure_key_subscription()
         self._initialized = True
         self.logger.info(f"LLMRouter initialized with {len(self._providers)} providers")
+
+    def _ensure_key_subscription(self) -> None:
+        if self._key_listener_registered:
+            return
+        self.key_manager.add_listener(self._on_key_change)
+        self._key_listener_registered = True
+
+    def _on_key_change(self, event: dict[str, Any]) -> None:
+        provider_id = str(event.get("key_name") or "").strip().lower()
+        key_type = str(event.get("key_type") or "").strip().lower()
+        self.provider_factory.invalidate_key_cache(provider_id or None)
+        if key_type:
+            self.provider_factory.invalidate_key_cache(key_type)
+
+        if not self._initialized:
+            return
+        loop = self._event_loop
+        if loop is None:
+            return
+        try:
+            if provider_id and provider_id in self._providers:
+                asyncio.run_coroutine_threadsafe(self.refresh_provider(provider_id), loop)
+            elif key_type and key_type in self._providers:
+                asyncio.run_coroutine_threadsafe(self.refresh_provider(key_type), loop)
+            else:
+                asyncio.run_coroutine_threadsafe(self.refresh_all_providers(), loop)
+        except Exception as exc:
+            self.logger.warning("Key change refresh scheduling failed: %s", exc)
+
+    async def refresh_provider(self, provider_id: str) -> bool:
+        pid = provider_id.strip().lower()
+        if not pid:
+            return False
+        async with self._refresh_lock:
+            try:
+                config = self._providers_config.get(pid)
+                if config and config.get("enabled", True):
+                    model = (config.get("models") or [None])[0]
+                    provider = self.provider_factory.create_from_config(config, pid, model=model)
+                else:
+                    current = self._providers.get(pid)
+                    model_name = current.model if current is not None else self._default_models.get(pid, "gpt-4o-mini")
+                    provider = self.provider_factory.create(pid, model_name)
+                self._providers[pid] = provider
+                self.logger.info("Provider refreshed due to key change: %s", pid)
+                return True
+            except Exception as exc:
+                self.logger.warning("Provider refresh failed for %s: %s", pid, exc)
+                return False
+
+    async def refresh_all_providers(self) -> None:
+        async with self._refresh_lock:
+            provider_ids = sorted(set(self._providers.keys()) | set(self._providers_config.keys()) | set(self._default_models.keys()))
+            for pid in provider_ids:
+                try:
+                    config = self._providers_config.get(pid)
+                    if config and config.get("enabled", True):
+                        model = (config.get("models") or [None])[0]
+                        provider = self.provider_factory.create_from_config(config, pid, model=model)
+                    else:
+                        current = self._providers.get(pid)
+                        model_name = current.model if current is not None else self._default_models.get(pid, "gpt-4o-mini")
+                        provider = self.provider_factory.create(pid, model_name)
+                    if provider.is_available():
+                        self._providers[pid] = provider
+                except Exception:
+                    continue
 
     async def route_request(
         self,
@@ -277,6 +362,11 @@ class LLMRouter:
             cost = prov.calculate_cost(100, len(content_str) // 4)
         if self.enable_budgeting and cost > 0:
             await self.budgeting.record_expense(cost)
+        if used_provider:
+            try:
+                self.key_manager.mark_used(used_provider)
+            except Exception:
+                pass
         if self.enable_monitoring:
             self.monitoring.record_complete_request(
                 trace_id=trace_id, provider=used_provider or "unknown", model=model or "unknown",

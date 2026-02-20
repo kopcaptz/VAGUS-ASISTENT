@@ -231,6 +231,23 @@ class SecretsConfig(BaseModel):
         return value
 
 
+class KeyBackupConfig(BaseModel):
+    """Конфигурация scheduled backup API ключей."""
+
+    enabled: bool = Field(default=False, description="Включить плановые backup ключей")
+    schedule: str = Field(
+        default="0 2 * * *",
+        description="Cron-расписание (поддерживается минимум minute/hour) или daily/weekly",
+    )
+    retention_days: int = Field(default=7, ge=1, le=3650, description="Срок хранения backup в днях")
+    encryption_password: Optional[str] = Field(
+        default=None,
+        description="Опциональный пароль для дополнительного слоя шифрования backup",
+    )
+    backup_dir: str = Field(default="~/.vagus/backups", description="Путь к директории backup файлов")
+    max_backups: int = Field(default=10, ge=1, le=500, description="Максимум сохраняемых backup файлов")
+
+
 class RetryConfig(BaseModel):
     """Конфигурация retry/backoff."""
 
@@ -350,6 +367,7 @@ class AppConfig(BaseModel):
     )
     plugins: PluginsConfig = Field(default_factory=PluginsConfig, description="Настройки плагинов")
     secrets: SecretsConfig = Field(default_factory=SecretsConfig, description="Настройки secrets backend")
+    key_backup: KeyBackupConfig = Field(default_factory=KeyBackupConfig, description="Настройки backup API ключей")
     
     @validator('version')
     def validate_version(cls, v):

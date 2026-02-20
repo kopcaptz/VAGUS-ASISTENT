@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{title}}</title>
+  <style>
+    :root { --accent: {{primary_color}}; }
+    body { margin: 0; font-family: Roboto, Arial, sans-serif; background: #f8f9fa; }
+    .container { display: grid; grid-template-columns: 260px 1fr; min-height: 100vh; }
+    .sidebar { background: #212529; color: #fff; padding: 20px; }
+    .content { padding: 20px; }
+    .row { display: grid; grid-template-columns: repeat(12, 1fr); gap: 12px; }
+    .col-6 { grid-column: span 6; }
+    .widget { background: #fff; border-radius: 10px; border-left: 4px solid var(--accent); padding: 16px; }
+    @media (max-width: 992px) { .container { grid-template-columns: 1fr; } .col-6 { grid-column: span 12; } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <aside class="sidebar">
+      <h2>{{heading}}</h2>
+      <p>Bootstrap-like dashboard structure</p>
+    </aside>
+    <main class="content">
+      <div class="row">
+        <section class="col-6"><div class="widget">Traffic</div></section>
+        <section class="col-6"><div class="widget">Conversion</div></section>
+      </div>
+    </main>
+  </div>
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      console.log("dashboard template ready");
+    });
+  </script>
+</body>
+</html>

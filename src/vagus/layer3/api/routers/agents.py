@@ -20,7 +20,7 @@ _AGENT_TASK_TYPES = {
 async def list_agents(
     orchestrator=Depends(get_orchestrator),
     current_user: dict = Depends(get_current_user),
-):
+) -> list[AgentInfoResponse]:
     """Возвращает список зарегистрированных агентов."""
     agents_info = []
     for agent in orchestrator.agents:

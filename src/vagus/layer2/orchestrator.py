@@ -10,10 +10,12 @@ import uuid
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from .agent_registry import AgentRegistry
 from .communication import CommunicationLayer
 from .agents.base_agent import BaseAgent
 from .dead_letter_queue import DeadLetterQueueStorage
 from .skills import SkillSystem
+from .types import AgentContext, AgentMetadata, AgentResult, AgentTask, MultiStepTask
 from ..layer0.logging import get_logger
 
 if TYPE_CHECKING:
@@ -156,6 +158,8 @@ class TaskOrchestrator:
         """
         self.communication = communication
         self.agents = agents or []
+        self.agent_registry = AgentRegistry(self.agents)
+        self.agents = self.agent_registry.list()
         self.memory = memory
         self.semantic_memory = semantic_memory
         self.dead_letter_queue = dead_letter_queue or DeadLetterQueueStorage()
@@ -307,11 +311,12 @@ class TaskOrchestrator:
             "researcher": 300.0,
             "coder": 600.0,
             "analyst": 180.0,
+            "designer": 240.0,
         }
         if not isinstance(task_timeouts, dict):
             return defaults
         normalized = dict(defaults)
-        for key in ("researcher", "coder", "analyst"):
+        for key in ("researcher", "coder", "analyst", "designer"):
             value = task_timeouts.get(key)
             if value is None:
                 continue
@@ -325,7 +330,8 @@ class TaskOrchestrator:
 
     def register_agent(self, agent: BaseAgent) -> None:
         """Регистрирует агента."""
-        self.agents.append(agent)
+        self.agent_registry.register(agent)
+        self.agents = self.agent_registry.list()
         self.logger.info(f"Agent registered: {agent.name}")
 
     async def is_agent_healthy(self, agent: BaseAgent) -> bool:
@@ -353,6 +359,11 @@ class TaskOrchestrator:
             for x in ("analysis", "statistics", "insights", "report", "анализ", "отчёт")
         ):
             return "analyst"
+        if any(
+            x in task_lower
+            for x in ("design", "ui", "ux", "layout", "mockup", "интерфейс", "дизайн")
+        ):
+            return "designer"
         return "default"
 
     def _resolve_timeout_seconds(self, *, task_type: str, agent: BaseAgent) -> float:
@@ -364,7 +375,7 @@ class TaskOrchestrator:
             return float(self.task_timeouts[task_key])
         return 300.0
 
-    def _extract_error_message(self, result: Dict[str, Any]) -> str:
+    def _extract_error_message(self, result: AgentResult) -> str:
         if result.get("error"):
             return str(result.get("error"))
         if result.get("success") is False:
@@ -389,7 +400,7 @@ class TaskOrchestrator:
         stack_trace: str,
         task_type: str,
         prompt: str,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: Optional[AgentMetadata | dict[str, Any]] = None,
     ) -> None:
         retry_count = 0
         if isinstance(metadata, dict):
@@ -451,6 +462,16 @@ class TaskOrchestrator:
             return f"Simple summary: {normalized}"
         return f"Simple summary: {normalized[:220]}..."
 
+    def _build_simple_layout_plan(self, prompt: str) -> str:
+        normalized = " ".join((prompt or "").split())
+        return (
+            "UI LAYOUT PLAN:\n"
+            "1. Define page structure (header/content/footer).\n"
+            "2. Use responsive grid with mobile-first breakpoints.\n"
+            "3. Ensure contrast and focus states for accessibility.\n"
+            f"4. Prioritize core user flow for: {normalized[:160]}"
+        )
+
     async def _apply_graceful_degradation(
         self,
         *,
@@ -458,8 +479,8 @@ class TaskOrchestrator:
         prompt: str,
         task_type: str,
         reason: str,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Optional[Dict[str, Any]]:
+        metadata: Optional[AgentMetadata | dict[str, Any]] = None,
+    ) -> Optional[AgentResult]:
         category = self._normalize_task_category(task_type)
         if category == "researcher":
             search_result = await self.skill_system.use_skill("search_web", query=prompt)
@@ -497,6 +518,16 @@ class TaskOrchestrator:
                     "reason": reason,
                 },
             }
+        if category == "designer":
+            return {
+                "content": self._build_simple_layout_plan(prompt),
+                "metadata": {
+                    "agent": "fallback",
+                    "fallback_strategy": "layout_plan",
+                    "degraded": True,
+                    "reason": reason,
+                },
+            }
         return None
 
     async def execute_task(
@@ -504,8 +535,8 @@ class TaskOrchestrator:
         task_id: str,
         prompt: str,
         task_type: str = "default",
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        metadata: Optional[AgentMetadata | dict[str, Any]] = None,
+    ) -> AgentResult:
         """
         Выполняет задачу. Скелет — выбор агента и вызов process().
         Записывает шаги в EpisodicMemory при наличии.
@@ -551,7 +582,7 @@ class TaskOrchestrator:
                 )
 
         enhanced_prompt = f"{context_prefix}{prompt}" if context_prefix else prompt
-        task = {
+        task: AgentTask = {
             "task_id": task_id,
             "prompt": enhanced_prompt,
             "task_type": task_type,
@@ -658,8 +689,8 @@ class TaskOrchestrator:
     async def execute_multi_step_task(
         self,
         task_id: str,
-        steps: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        steps: List[MultiStepTask],
+    ) -> AgentResult:
         """
         Выполняет многошаговую задачу (цепочку шагов).
         Каждый шаг: {"type": "research"|"code"|"analysis", "prompt": "..."}
@@ -670,8 +701,8 @@ class TaskOrchestrator:
             return {"error": "Empty steps", "steps_results": []}
 
         self.logger.info(f"Multi-step task {task_id}: {len(steps)} steps")
-        steps_results: List[Dict[str, Any]] = []
-        context: Dict[str, Any] = {"previous_steps": []}
+        steps_results: list[AgentResult] = []
+        context: AgentContext = {"previous_steps": []}
 
         for i, step_def in enumerate(steps):
             step_type = step_def.get("type", "default")
@@ -745,7 +776,7 @@ class TaskOrchestrator:
                 steps_results.append(err)
                 return {"error": err["error"], "steps_results": steps_results}
 
-            task = {
+            task: AgentTask = {
                 "task_id": step_task_id,
                 "prompt": prompt,
                 "task_type": step_type,
@@ -820,7 +851,7 @@ class TaskOrchestrator:
         prompts: List[str],
         task_types: Optional[List[str]] = None,
         max_concurrency: int = 5,
-    ) -> Dict[str, Any]:
+    ) -> AgentResult:
         """
         Параллельное выполнение независимых задач.
         Использует asyncio.gather() с ограничением через Semaphore.
@@ -847,7 +878,7 @@ class TaskOrchestrator:
 
         semaphore = asyncio.Semaphore(max_concurrency)
 
-        async def _run_one(tid: str, prompt: str, ttype: str) -> Dict[str, Any]:
+        async def _run_one(tid: str, prompt: str, ttype: str) -> AgentResult:
             async with semaphore:
                 return await self.execute_task(tid, prompt, ttype)
 
@@ -855,8 +886,8 @@ class TaskOrchestrator:
         coros = [_run_one(tid, p, t) for tid, p, t in zip(task_ids, prompts, task_types)]
         raw_results = await asyncio.gather(*coros, return_exceptions=True)
 
-        results: Dict[str, Any] = {}
-        errors: Dict[str, str] = {}
+        results: dict[str, AgentResult] = {}
+        errors: dict[str, str] = {}
         for task_id, raw in zip(task_ids, raw_results):
             if isinstance(raw, Exception):
                 errors[task_id] = str(raw)
@@ -875,7 +906,4 @@ class TaskOrchestrator:
 
     def _select_agent(self, task_type: str) -> Optional[BaseAgent]:
         """Выбирает агента по типу задачи. Пока — первый подходящий."""
-        for agent in self.agents:
-            if agent.can_handle(task_type):
-                return agent
-        return self.agents[0] if self.agents else None
+        return self.agent_registry.find_by_task_type(task_type)

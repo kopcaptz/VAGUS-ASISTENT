@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{title}}</title>
+  <style>
+    :root { --primary: {{primary_color}}; --bg: {{background_color}}; }
+    body { margin: 0; font-family: Arial, sans-serif; background: var(--bg); color: #1f2937; }
+    .header { background: var(--primary); color: #fff; padding: 12px 16px; }
+    .panel { padding: 16px; }
+    .table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; }
+    .table th, .table td { border-bottom: 1px solid #e5e7eb; padding: 10px; text-align: left; }
+    .badge { display: inline-block; background: #ecfeff; color: #155e75; padding: 2px 8px; border-radius: 12px; font-size: 12px; }
+    @media (max-width: 640px) {
+      .table th:nth-child(3), .table td:nth-child(3) { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="header">{{heading}}</header>
+  <main class="panel">
+    <h1>{{subheading}}</h1>
+    <table class="table">
+      <thead><tr><th>User</th><th>Status</th><th>Role</th></tr></thead>
+      <tbody>
+        <tr><td>Alice</td><td><span class="badge">active</span></td><td>admin</td></tr>
+        <tr><td>Bob</td><td><span class="badge">active</span></td><td>editor</td></tr>
+      </tbody>
+    </table>
+  </main>
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      console.log("admin panel template ready");
+    });
+  </script>
+</body>
+</html>

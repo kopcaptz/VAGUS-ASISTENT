@@ -286,6 +286,14 @@ class ConfigManager:
                 "vault_addr": "http://localhost:8200",
                 "vault_token": ""
             },
+            "key_backup": {
+                "enabled": False,
+                "schedule": "0 2 * * *",
+                "retention_days": 7,
+                "encryption_password": None,
+                "backup_dir": "~/.vagus/backups",
+                "max_backups": 10,
+            },
             "plugins": {
                 "enabled": True,
                 "auto_discover": True,

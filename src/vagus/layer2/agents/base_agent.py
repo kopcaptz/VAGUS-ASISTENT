@@ -4,9 +4,11 @@
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from ...layer0.logging import get_logger
+from ..types import AgentContext, AgentResult, AgentTask
+from .protocols import LLMRouterProtocol
 
 
 class BaseAgent(ABC):
@@ -18,7 +20,7 @@ class BaseAgent(ABC):
     def __init__(
         self,
         name: str,
-        llm_router: Any,
+        llm_router: LLMRouterProtocol,
         description: str = "",
     ):
         """
@@ -33,7 +35,11 @@ class BaseAgent(ABC):
         self.logger = get_logger(f"layer2.agent.{name}")
 
     @abstractmethod
-    async def process(self, task: Dict[str, Any], context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def process(
+        self,
+        task: AgentTask,
+        context: Optional[AgentContext] = None,
+    ) -> AgentResult:
         """
         Обрабатывает задачу. Должен быть реализован в подклассах.
 
