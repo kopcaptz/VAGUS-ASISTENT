@@ -143,6 +143,29 @@ task_timeouts:
   analyst: 180
 
 layer2:
+  conversation_summarizer:
+    enabled: true
+    max_input_steps: 50
+    min_summary_words: 50
+    max_summary_words: 500
+  procedural_memory:
+    enabled: true
+    db_path: "data/procedural.db"
+    similarity_threshold: 0.7
+  communication:
+    redis_url: null  # redis://localhost:6379/0 для Event Bus
+    event_bus:
+      enabled: true  # false чтобы отключить
+  blackboard:
+    redis_url: null  # redis://localhost:6379/0 для production
+    ttl_hours: 24
+  intent_classifier:
+    confidence_threshold: 0.5
+  task_planner:
+    max_steps: 10
+  master_orchestrator:
+    enable_reflexion: false
+    enable_evaluator: false
   cluster:
     enabled: false
     node_id: node-local

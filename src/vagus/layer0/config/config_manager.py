@@ -265,6 +265,37 @@ class ConfigManager:
                 "analyst": 180,
             },
             "layer2": {
+                "conversation_summarizer": {
+                    "enabled": True,
+                    "max_input_steps": 50,
+                    "min_summary_words": 50,
+                    "max_summary_words": 500,
+                },
+                "procedural_memory": {
+                    "enabled": True,
+                    "db_path": "data/procedural.db",
+                    "similarity_threshold": 0.7,
+                },
+                "communication": {
+                    "redis_url": None,
+                    "event_bus": {
+                        "enabled": True,
+                    },
+                },
+                "blackboard": {
+                    "redis_url": None,
+                    "ttl_hours": 24,
+                },
+                "intent_classifier": {
+                    "confidence_threshold": 0.5,
+                },
+                "task_planner": {
+                    "max_steps": 10,
+                },
+                "master_orchestrator": {
+                    "enable_reflexion": False,
+                    "enable_evaluator": False,
+                },
                 "cluster": {
                     "enabled": False,
                     "node_id": "node-local",

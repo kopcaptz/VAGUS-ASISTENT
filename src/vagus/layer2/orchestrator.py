@@ -11,15 +11,19 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from .agent_registry import AgentRegistry
-from .communication import CommunicationLayer
+from .communication import CommunicationLayer, SharedBlackboard
 from .agents.base_agent import BaseAgent
 from .dead_letter_queue import DeadLetterQueueStorage
+from .intent_classifier import IntentClassifier, IntentResult
+from .planning import TaskPlan, TaskPlanner, TaskStep, task_plan_get_ordered_steps
 from .skills import SkillSystem
 from .types import AgentContext, AgentMetadata, AgentResult, AgentTask, MultiStepTask
 from ..layer0.logging import get_logger
 
 if TYPE_CHECKING:
     from .memory.episodic import EpisodicMemory
+    from .memory.procedural import ProceduralMemory
+    from .memory.summarizer import ConversationSummarizer
     from .memory.semantic import SemanticMemory
     from ..monitoring.error_analytics import ErrorAnalyticsStorage
 
@@ -148,6 +152,9 @@ class TaskOrchestrator:
         skill_system: Optional[SkillSystem] = None,
         error_analytics: Optional["ErrorAnalyticsStorage"] = None,
         cluster_config: Optional[Dict[str, Any]] = None,
+        enable_reflexion: bool = True,
+        max_reflection_iterations: int = 2,
+        reflection_threshold: float = 0.7,
     ):
         """
         Args:
@@ -155,8 +162,14 @@ class TaskOrchestrator:
             agents: Список агентов (Researcher, Coder, ...)
             memory: EpisodicMemory для записи истории выполнения (опционально)
             semantic_memory: SemanticMemory для векторного поиска похожих задач (опционально)
+            enable_reflexion: Включить Reflexion Loop (оценка + рефлексия при низком score)
+            max_reflection_iterations: Максимум попыток рефлексии
+            reflection_threshold: Порог score для признания результата приемлемым (0..1)
         """
         self.communication = communication
+        self.enable_reflexion = enable_reflexion
+        self.max_reflection_iterations = max(max_reflection_iterations, 1)
+        self.reflection_threshold = max(0.0, min(1.0, reflection_threshold))
         self.agents = agents or []
         self.agent_registry = AgentRegistry(self.agents)
         self.agents = self.agent_registry.list()
@@ -311,12 +324,13 @@ class TaskOrchestrator:
             "researcher": 300.0,
             "coder": 600.0,
             "analyst": 180.0,
+            "evaluator": 120.0,
             "designer": 240.0,
         }
         if not isinstance(task_timeouts, dict):
             return defaults
         normalized = dict(defaults)
-        for key in ("researcher", "coder", "analyst", "designer"):
+        for key in ("researcher", "coder", "analyst", "evaluator", "designer"):
             value = task_timeouts.get(key)
             if value is None:
                 continue
@@ -359,6 +373,8 @@ class TaskOrchestrator:
             for x in ("analysis", "statistics", "insights", "report", "анализ", "отчёт")
         ):
             return "analyst"
+        if any(x in task_lower for x in ("evaluation", "evaluate", "assessment", "review", "оценка")):
+            return "evaluator"
         if any(
             x in task_lower
             for x in ("design", "ui", "ux", "layout", "mockup", "интерфейс", "дизайн")
@@ -472,6 +488,142 @@ class TaskOrchestrator:
             f"4. Prioritize core user flow for: {normalized[:160]}"
         )
 
+    def _build_simple_evaluation(self, prompt: str) -> dict[str, Any]:
+        normalized = " ".join((prompt or "").split())
+        return {
+            "score": 0.3,
+            "is_acceptable": False,
+            "issues": [f"Evaluator unavailable for prompt: {normalized[:180]}"],
+            "suggestions": ["Retry evaluation after evaluator agent recovers."],
+        }
+
+    async def _run_reflexion_loop(
+        self,
+        *,
+        task_id: str,
+        prompt: str,
+        task_type: str,
+        metadata: Optional[AgentMetadata | dict[str, Any]],
+        agent: BaseAgent,
+        task: AgentTask,
+        result: AgentResult,
+        timeout_seconds: float,
+    ) -> tuple[AgentResult, List[Dict[str, Any]]]:
+        """Reflexion loop: evaluate -> reflect -> retry up to max_reflection_iterations."""
+        meta = metadata or {}
+        meta_dict = meta if isinstance(meta, dict) else {}
+        enable = self.enable_reflexion and meta_dict.get("enable_reflexion", True) is not False
+        if not enable:
+            return (result, [])
+        task_lower = (task_type or "").lower()
+        if task_lower in ("evaluation", "reflection"):
+            return (result, [])
+
+        max_iter = meta_dict.get("max_reflection_iterations")
+        if max_iter is not None:
+            try:
+                max_iter = max(1, int(max_iter))
+            except (TypeError, ValueError):
+                max_iter = self.max_reflection_iterations
+        else:
+            max_iter = self.max_reflection_iterations
+
+        threshold = meta_dict.get("reflection_threshold")
+        if threshold is not None:
+            try:
+                threshold = max(0.0, min(1.0, float(threshold)))
+            except (TypeError, ValueError):
+                threshold = self.reflection_threshold
+        else:
+            threshold = self.reflection_threshold
+
+        evaluator = self.agent_registry.find_by_task_type("evaluation")
+        reflection_agent = self.agent_registry.find_by_task_type("reflection")
+        if not evaluator or not reflection_agent:
+            return (result, [])
+
+        self.logger.info(
+            "Task %s: starting reflexion loop, threshold=%.2f, max_iterations=%d",
+            task_id, threshold, max_iter,
+        )
+        evaluated: List[tuple[AgentResult, float]] = []
+        current_result = result
+        task_copy = dict(task)
+
+        for i in range(max_iter):
+            eval_task: AgentTask = {
+                "task_id": f"{task_id}_eval_{i}",
+                "prompt": "",
+                "task_type": "evaluation",
+                "metadata": {
+                    "original_prompt": prompt,
+                    "agent_result": current_result,
+                },
+            }
+            try:
+                eval_result = await evaluator.process(eval_task)
+            except Exception as exc:
+                self.logger.warning("Task %s: evaluator failed: %s", task_id, exc)
+                break
+            if self._result_has_error(eval_result):
+                break
+            score = float(eval_result.get("score", 0.0))
+            evaluated.append((current_result, score))
+            self.logger.info(
+                "Task %s: evaluation score=%.2f, acceptable=%s",
+                task_id, score, score >= threshold,
+            )
+            if score >= threshold:
+                self.logger.info("Task %s: reflexion completed, score=%.2f, attempts=%d", task_id, score, i + 1)
+                return (current_result, [{"score": s, "iteration": j} for j, (_, s) in enumerate(evaluated)])
+
+            if i == max_iter - 1:
+                break
+            ref_task: AgentTask = {
+                "task_id": f"{task_id}_ref_{i}",
+                "prompt": "",
+                "task_type": "reflection",
+                "metadata": {
+                    "original_prompt": prompt,
+                    "agent_result": current_result,
+                    "evaluation_result": eval_result,
+                    "agent_type": agent.name,
+                },
+            }
+            try:
+                ref_result = await reflection_agent.process(ref_task)
+            except Exception as exc:
+                self.logger.warning("Task %s: reflection failed: %s", task_id, exc)
+                break
+            if self._result_has_error(ref_result):
+                break
+            refined_prompt = (ref_result.get("content") or "").strip()
+            if not refined_prompt:
+                break
+            self.logger.info(
+                "Task %s: refinement iteration %d, refined_prompt_len=%d",
+                task_id, i, len(refined_prompt),
+            )
+            task_copy["prompt"] = refined_prompt
+            task_copy["metadata"] = {**(meta_dict or {}), "reflexion_iteration": i}
+            try:
+                current_result = await asyncio.wait_for(
+                    agent.process(task_copy),
+                    timeout=timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                break
+            if self._result_has_error(current_result):
+                break
+
+        best = max(evaluated, key=lambda x: x[1]) if evaluated else (result, 0.0)
+        attempts = [{"score": s, "iteration": j} for j, (_, s) in enumerate(evaluated)]
+        self.logger.info(
+            "Task %s: reflexion completed, best_score=%.2f, attempts=%d",
+            task_id, best[1], len(attempts),
+        )
+        return (best[0], attempts)
+
     async def _apply_graceful_degradation(
         self,
         *,
@@ -524,6 +676,16 @@ class TaskOrchestrator:
                 "metadata": {
                     "agent": "fallback",
                     "fallback_strategy": "layout_plan",
+                    "degraded": True,
+                    "reason": reason,
+                },
+            }
+        if category == "evaluator":
+            return {
+                **self._build_simple_evaluation(prompt),
+                "metadata": {
+                    "agent": "fallback",
+                    "fallback_strategy": "rule_based_evaluation",
                     "degraded": True,
                     "reason": reason,
                 },
@@ -621,6 +783,24 @@ class TaskOrchestrator:
                         metadata={"task_type": task_type, "failed": True},
                     )
                 return result
+
+            result, reflexion_attempts = await self._run_reflexion_loop(
+                task_id=task_id,
+                prompt=prompt,
+                task_type=task_type,
+                metadata=metadata,
+                agent=agent,
+                task=task,
+                result=result,
+                timeout_seconds=timeout_seconds,
+            )
+            if reflexion_attempts:
+                meta = result.get("metadata") or {}
+                if not isinstance(meta, dict):
+                    meta = dict(meta)
+                meta["reflexion_attempts"] = reflexion_attempts
+                result = dict(result)
+                result["metadata"] = meta
 
             if self.memory:
                 self.memory.add_step(
@@ -907,3 +1087,264 @@ class TaskOrchestrator:
     def _select_agent(self, task_type: str) -> Optional[BaseAgent]:
         """Выбирает агента по типу задачи. Пока — первый подходящий."""
         return self.agent_registry.find_by_task_type(task_type)
+
+
+class MasterOrchestrator:
+    """
+    Главный оркестратор: Intent -> Plan -> Execution -> Synthesis.
+    Объединяет IntentClassifier, TaskPlanner, SharedBlackboard в единый процесс.
+    """
+
+    def __init__(
+        self,
+        llm_router: Any,
+        intent_classifier: IntentClassifier,
+        task_planner: TaskPlanner,
+        shared_blackboard: SharedBlackboard,
+        agent_registry: AgentRegistry,
+        *,
+        event_bus: Optional[CommunicationLayer] = None,
+        procedural_memory: Optional["ProceduralMemory"] = None,
+        conversation_summarizer: Optional["ConversationSummarizer"] = None,
+        config: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        self.llm_router = llm_router
+        self.intent_classifier = intent_classifier
+        self.task_planner = task_planner
+        self.shared_blackboard = shared_blackboard
+        self.agent_registry = agent_registry
+        self.event_bus = event_bus
+        self.procedural_memory = procedural_memory
+        self.conversation_summarizer = conversation_summarizer
+        self.config = config or {}
+        self.logger = get_logger("layer2.master_orchestrator")
+
+    def _event_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Добавляет trace_id в payload для отслеживания в Event Bus."""
+        try:
+            from ..logging import get_trace_id
+            tid = get_trace_id()
+            if tid:
+                return {**payload, "trace_id": tid}
+        except Exception:
+            pass
+        return payload
+
+    def _result_has_error(self, result: Any) -> bool:
+        if not isinstance(result, dict):
+            return False
+        if result.get("error"):
+            return True
+        if result.get("success") is False:
+            return True
+        return False
+
+    async def execute_task(
+        self, task_id: str, prompt: str, task_type: Optional[str] = None
+    ) -> AgentResult:
+        """
+        API-совместимый интерфейс: делегирует в process_request.
+        task_type игнорируется — MasterOrchestrator сам определяет intent.
+        """
+        result = await self.process_request(prompt)
+        if isinstance(result, dict) and "metadata" in result:
+            meta = result.get("metadata") or {}
+            result = {**result, "metadata": {**meta, "task_id": task_id}}
+        return result
+
+    async def process_request(self, user_input: str) -> AgentResult:
+        """
+        Обрабатывает запрос пользователя: classify -> plan -> execute -> synthesize.
+        """
+        self.logger.info("process_request: user_input=%s", (user_input or "")[:100])
+
+        intent_result: IntentResult
+        try:
+            intent_result = await self.intent_classifier.classify(user_input or "")
+        except Exception as exc:
+            self.logger.warning("Intent classification failed, using fallback: %s", exc)
+            intent_result = {
+                "primary_intent": "mixed",
+                "sub_intents": [],
+                "entities": {},
+                "complexity": "moderate",
+                "confidence": 0.5,
+            }
+
+        self.logger.info(
+            "process_request: intent=%s complexity=%s confidence=%.2f",
+            intent_result.get("primary_intent"),
+            intent_result.get("complexity"),
+            intent_result.get("confidence", 0),
+        )
+
+        plan: TaskPlan
+        try:
+            plan = await self.task_planner.create_plan(intent_result)
+        except Exception as exc:
+            self.logger.warning("Task planning failed, using fallback: %s", exc)
+            plan = {
+                "plan_id": f"plan_fallback_{uuid.uuid4().hex[:8]}",
+                "steps": [
+                    {
+                        "step_id": uuid.uuid4().hex[:8],
+                        "agent_type": "coder",
+                        "prompt": str(user_input or "Выполни задачу."),
+                        "depends_on": [],
+                        "artefact_key": "result",
+                    }
+                ],
+                "execution_mode": "sequential",
+            }
+
+        plan_id = plan.get("plan_id") or uuid.uuid4().hex
+        steps = task_plan_get_ordered_steps(plan)
+        self.logger.info(
+            "process_request: plan_id=%s steps=%d execution_mode=%s",
+            plan_id,
+            len(steps),
+            plan.get("execution_mode", "sequential"),
+        )
+
+        if self.event_bus:
+            await self.event_bus.publish_event(
+                "task.planned",
+                self._event_payload({"plan_id": plan_id, "steps": [s.get("step_id") for s in steps], "execution_mode": plan.get("execution_mode")}),
+                task_id=plan_id,
+            )
+
+        step_by_id = {s["step_id"]: s for s in plan.get("steps", [])}
+
+        for step in steps:
+            step_id = step["step_id"]
+            agent_type = step.get("agent_type", "coder")
+            artefact_key = step.get("artefact_key", "result")
+            prompt = step.get("prompt", "").strip() or "Выполни задачу."
+
+            self.logger.info(
+                "process_request: step step_id=%s agent_type=%s artefact_key=%s",
+                step_id,
+                agent_type,
+                artefact_key,
+            )
+
+            agent = self.agent_registry.find_by_name(agent_type)
+            if not agent:
+                self.logger.warning("No agent for agent_type=%s, skipping step", agent_type)
+                task_id_skip = f"{plan_id}_{step_id}"
+                if self.event_bus:
+                    await self.event_bus.publish_event(
+                        "task.failed",
+                        self._event_payload({"step_id": step_id, "agent_type": agent_type, "error": f"No agent for {agent_type}"}),
+                        task_id=task_id_skip,
+                    )
+                await self.shared_blackboard.write(
+                    plan_id,
+                    artefact_key,
+                    {"error": f"No agent for {agent_type}"},
+                )
+                continue
+
+            context_parts: List[str] = []
+            for dep_id in step.get("depends_on", []):
+                dep_step = step_by_id.get(dep_id)
+                if dep_step:
+                    dep_key = dep_step.get("artefact_key")
+                    if dep_key:
+                        dep_artefact = await self.shared_blackboard.read(plan_id, dep_key)
+                        if dep_artefact is not None:
+                            content = dep_artefact.get("content", dep_artefact) if isinstance(dep_artefact, dict) else dep_artefact
+                            context_parts.append(f"[{dep_key}]: {str(content)[:500]}")
+
+            enriched_prompt = prompt
+            if context_parts:
+                enriched_prompt = "Context from previous steps:\n" + "\n".join(context_parts) + "\n\nTask: " + prompt
+
+            task: AgentTask = {
+                "task_id": f"{plan_id}_{step_id}",
+                "prompt": enriched_prompt,
+                "task_type": agent_type,
+                "metadata": {"plan_id": plan_id, "step_id": step_id, "original_prompt": user_input},
+            }
+            task_id = f"{plan_id}_{step_id}"
+
+            if self.event_bus:
+                await self.event_bus.publish_event(
+                    "agent.started",
+                    self._event_payload({"step_id": step_id, "agent_type": agent_type, "artefact_key": artefact_key}),
+                    task_id=task_id,
+                )
+
+            try:
+                result = await agent.process(task)
+            except Exception as exc:
+                self.logger.exception("Step %s failed: %s", step_id, exc)
+                result = {"error": str(exc), "content": ""}
+                if self.event_bus:
+                    await self.event_bus.publish_event(
+                        "task.failed",
+                        self._event_payload({"step_id": step_id, "agent_type": agent_type, "error": str(exc)}),
+                        task_id=task_id,
+                    )
+
+            if self.event_bus:
+                await self.event_bus.publish_event(
+                    "agent.finished",
+                    self._event_payload({"step_id": step_id, "agent_type": agent_type, "has_error": self._result_has_error(result)}),
+                    task_id=task_id,
+                )
+
+            await self.shared_blackboard.write(plan_id, artefact_key, result)
+
+            if self._result_has_error(result):
+                self.logger.warning("Step %s returned error: %s", step_id, result.get("error"))
+                if self.event_bus:
+                    await self.event_bus.publish_event(
+                        "task.failed",
+                        self._event_payload({"step_id": step_id, "agent_type": agent_type, "error": result.get("error", "Unknown")}),
+                        task_id=task_id,
+                    )
+            elif self.event_bus:
+                await self.event_bus.publish_event(
+                    "quality_gate.passed",
+                    self._event_payload({"step_id": step_id, "agent_type": agent_type, "artefact_key": artefact_key}),
+                    task_id=task_id,
+                )
+
+        artefacts = await self.shared_blackboard.read_all(plan_id)
+        content_parts = []
+        for key, val in artefacts.items():
+            if val is not None:
+                cnt = val.get("content", val) if isinstance(val, dict) else val
+                if cnt and not (isinstance(val, dict) and val.get("error")):
+                    content_parts.append(str(cnt))
+        final_content = "\n\n---\n\n".join(content_parts) if content_parts else ""
+
+        self.logger.info("process_request: plan_id=%s artefacts_count=%d", plan_id, len(artefacts))
+
+        if self.event_bus:
+            await self.event_bus.publish_event(
+                "task.completed",
+                self._event_payload({"plan_id": plan_id, "artefacts": list(artefacts.keys()), "content_length": len(final_content)}),
+                task_id=plan_id,
+            )
+
+        if self.procedural_memory and self.procedural_memory.enabled:
+            has_error = any(
+                isinstance(v, dict) and v.get("error")
+                for v in artefacts.values()
+                if v is not None
+            )
+            if not has_error and final_content and final_content != "No results produced.":
+                from .memory.procedural import intent_to_summary
+                intent_summary = intent_to_summary(intent_result)
+                try:
+                    await self.procedural_memory.save_plan(plan, intent_summary, success_score=1.0)
+                    self.logger.debug("Saved plan to ProceduralMemory")
+                except Exception as exc:
+                    self.logger.warning("Failed to save plan to ProceduralMemory: %s", exc)
+
+        return {
+            "content": final_content or "No results produced.",
+            "metadata": {"plan_id": plan_id, "artefacts": list(artefacts.keys())},
+        }

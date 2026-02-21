@@ -6,12 +6,19 @@ SemanticMemory — векторное хранилище для долгосро
 import hashlib
 import math
 import uuid
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, Tuple
 
 if TYPE_CHECKING:
     from .episodic import EpisodicMemory
 
 from ...layer0.logging import get_logger
+
+try:
+    import chromadb
+    from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+except Exception:
+    chromadb = None
+    SentenceTransformerEmbeddingFunction = None
 
 
 class EmbedderProtocol(Protocol):
@@ -57,19 +64,112 @@ class SemanticMemory:
     def __init__(
         self,
         embedder: Optional[EmbedderProtocol] = None,
-        collection_name: str = "vagus_semantic",
+        collection_name: str = "vagus_semantic_memory",
+        chroma_client: Optional[Any] = None,
+        chroma_path: Optional[str] = None,
     ):
         """
         Args:
             embedder: Функция embed(texts: List[str]) -> List[List[float]].
                      По умолчанию — простой bag-of-words.
             collection_name: Имя коллекции (для ChromaDB, если используется)
+            chroma_client: Готовый клиент ChromaDB (опционально)
+            chroma_path: Путь для PersistentClient ChromaDB (опционально)
         """
         self._embedder = embedder or _default_embed
         self._collection_name = collection_name
         self._storage: Dict[str, Dict[str, Any]] = {}
         self._embedding_cache: Dict[str, List[float]] = {}
+        self._chroma_client = None
+        self._chroma_collection = None
+        self._chroma_embed_with_sentence_transformer = False
         self.logger = get_logger("layer2.memory.semantic")
+
+        if chroma_client is None and chroma_path and chromadb is not None:
+            try:
+                chroma_client = chromadb.PersistentClient(path=chroma_path)
+            except Exception as exc:
+                self.logger.warning(
+                    "Failed to initialize Chroma PersistentClient at %s: %s. Falling back to in-memory mode.",
+                    chroma_path,
+                    exc,
+                )
+
+        if chroma_client is not None:
+            self._setup_chroma_backend(chroma_client)
+
+    @property
+    def _using_chroma(self) -> bool:
+        return self._chroma_collection is not None
+
+    def _setup_chroma_backend(self, chroma_client: Any) -> None:
+        if chromadb is None:
+            self.logger.warning(
+                "Chroma client provided but chromadb is unavailable. Falling back to in-memory mode."
+            )
+            return
+
+        collection_kwargs: Dict[str, Any] = {
+            "name": self._collection_name,
+            "metadata": {"hnsw:space": "cosine"},
+        }
+        if SentenceTransformerEmbeddingFunction is not None:
+            try:
+                collection_kwargs["embedding_function"] = SentenceTransformerEmbeddingFunction(
+                    model_name="all-MiniLM-L6-v2"
+                )
+                self._chroma_embed_with_sentence_transformer = True
+            except Exception as exc:
+                self.logger.warning(
+                    "Failed to initialize SentenceTransformerEmbeddingFunction: %s. "
+                    "Using local fallback embedder for Chroma.",
+                    exc,
+                )
+
+        try:
+            self._chroma_client = chroma_client
+            self._chroma_collection = self._chroma_client.get_or_create_collection(
+                **collection_kwargs
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "Failed to initialize Chroma collection '%s': %s. Falling back to in-memory mode.",
+                self._collection_name,
+                exc,
+            )
+            self._chroma_client = None
+            self._chroma_collection = None
+            self._chroma_embed_with_sentence_transformer = False
+
+    @staticmethod
+    def _distance_to_score(distance: Optional[float]) -> float:
+        if distance is None:
+            return 0.0
+        # Для cosine distance в Chroma меньше — лучше. Нормируем в [0..1].
+        return min(1.0, max(0.0, 1.0 - float(distance)))
+
+    def add_document(self, doc_id: str, text: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """Добавляет документ в память."""
+        meta = dict(metadata or {})
+
+        if self._using_chroma:
+            if self._chroma_embed_with_sentence_transformer:
+                self._chroma_collection.upsert(ids=[doc_id], documents=[text], metadatas=[meta])
+            else:
+                self._chroma_collection.upsert(
+                    ids=[doc_id],
+                    documents=[text],
+                    metadatas=[meta],
+                    embeddings=self._embedder([text]),
+                )
+            return
+
+        self._storage[doc_id] = {
+            "task_id": meta.get("task_id", doc_id),
+            "text": text,
+            "embedding": self._embedder([text])[0],
+            "metadata": meta,
+        }
 
     def add_embedding(
         self,
@@ -89,15 +189,58 @@ class SemanticMemory:
             embedding_id — уникальный идентификатор записи
         """
         embedding_id = f"{task_id}_{uuid.uuid4().hex[:8]}"
-        vectors = self._embedder([text])
-        self._storage[embedding_id] = {
-            "task_id": task_id,
-            "text": text,
-            "embedding": vectors[0],
-            "metadata": metadata or {},
-        }
+        meta = dict(metadata or {})
+        meta["task_id"] = task_id
+        self.add_document(embedding_id, text, meta)
         self.logger.debug(f"Added embedding {embedding_id} for task {task_id}")
         return embedding_id
+
+    def search(self, query: str, top_k: int = 5) -> List[Tuple[str, float, Dict[str, Any]]]:
+        """
+        Унифицированный поиск:
+        Returns: List[(doc_id, score, metadata)]
+        """
+        if self._using_chroma:
+            if self.get_document_count() == 0:
+                return []
+            query_kwargs: Dict[str, Any] = {
+                "query_texts": [query],
+                "n_results": top_k,
+                "include": ["metadatas", "distances"],
+            }
+            if not self._chroma_embed_with_sentence_transformer:
+                query_kwargs["query_embeddings"] = self._embedder([query])
+                query_kwargs.pop("query_texts", None)
+            result = self._chroma_collection.query(**query_kwargs)
+            ids = result.get("ids", [[]])[0]
+            distances = result.get("distances", [[]])[0]
+            metadatas = result.get("metadatas", [[]])[0]
+            return [
+                (
+                    doc_id,
+                    round(self._distance_to_score(distance), 4),
+                    metadata or {},
+                )
+                for doc_id, distance, metadata in zip(ids, distances, metadatas)
+            ]
+
+        if not self._storage:
+            return []
+
+        cache_key = f"q:{hashlib.md5(query.encode()).hexdigest()}"
+        if cache_key in self._embedding_cache:
+            query_vec = self._embedding_cache[cache_key]
+        else:
+            query_vec = self._embedder([query])[0]
+            self._embedding_cache[cache_key] = query_vec
+
+        scored: List[Tuple[str, float, Dict[str, Any]]] = []
+        for doc_id, record in self._storage.items():
+            score = _cosine_similarity(query_vec, record["embedding"])
+            scored.append((doc_id, round(score, 4), record["metadata"]))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored[:top_k]
 
     def search_similar(
         self,
@@ -116,6 +259,42 @@ class SemanticMemory:
         Returns:
             Список dict с полями: task_id, text, score, metadata
         """
+        if self._using_chroma:
+            if self.get_document_count() == 0:
+                return []
+
+            query_kwargs: Dict[str, Any] = {
+                "query_texts": [query],
+                "n_results": top_k,
+                "include": ["metadatas", "distances", "documents"],
+            }
+            if not self._chroma_embed_with_sentence_transformer:
+                query_kwargs["query_embeddings"] = self._embedder([query])
+                query_kwargs.pop("query_texts", None)
+
+            result = self._chroma_collection.query(**query_kwargs)
+            ids = result.get("ids", [[]])[0]
+            distances = result.get("distances", [[]])[0]
+            metadatas = result.get("metadatas", [[]])[0]
+            documents = result.get("documents", [[]])[0]
+
+            items: List[Dict[str, Any]] = []
+            for emb_id, distance, metadata, doc_text in zip(ids, distances, metadatas, documents):
+                score = round(self._distance_to_score(distance), 4)
+                if score < min_score:
+                    continue
+                meta = metadata or {}
+                items.append(
+                    {
+                        "embedding_id": emb_id,
+                        "task_id": meta.get("task_id", emb_id),
+                        "text": doc_text or "",
+                        "score": score,
+                        "metadata": meta,
+                    }
+                )
+            return items
+
         if not self._storage:
             return []
 
@@ -130,16 +309,40 @@ class SemanticMemory:
         for emb_id, record in self._storage.items():
             score = _cosine_similarity(query_vec, record["embedding"])
             if score >= min_score:
-                scored.append((score, {
-                    "embedding_id": emb_id,
-                    "task_id": record["task_id"],
-                    "text": record["text"],
-                    "score": round(score, 4),
-                    "metadata": record["metadata"],
-                }))
+                scored.append(
+                    (
+                        score,
+                        {
+                            "embedding_id": emb_id,
+                            "task_id": record["task_id"],
+                            "text": record["text"],
+                            "score": round(score, 4),
+                            "metadata": record["metadata"],
+                        },
+                    )
+                )
 
         scored.sort(key=lambda x: x[0], reverse=True)
         return [s[1] for s in scored[:top_k]]
+
+    def clear(self) -> None:
+        """Полностью очищает память."""
+        if self._using_chroma:
+            try:
+                self._chroma_client.delete_collection(name=self._collection_name)
+            except Exception:
+                pass
+            self._setup_chroma_backend(self._chroma_client)
+            return
+
+        self._storage.clear()
+        self._embedding_cache.clear()
+
+    def get_document_count(self) -> int:
+        """Возвращает количество документов в памяти."""
+        if self._using_chroma:
+            return int(self._chroma_collection.count())
+        return len(self._storage)
 
     def get_context(
         self,

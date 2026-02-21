@@ -54,6 +54,22 @@ services:
       - marketplace
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+  chromadb:
+    image: chromadb/chroma:latest
+    ports:
+      - "8020:8000"
+    volumes:
+      - chroma-data:/chroma/chroma
+    restart: unless-stopped
+
   telegram-bot:
     build:
       context: .
@@ -72,3 +88,5 @@ services:
 
 volumes:
   api-data:
+  redis-data:
+  chroma-data:

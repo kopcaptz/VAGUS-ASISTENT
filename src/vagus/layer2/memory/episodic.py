@@ -2,26 +2,105 @@
 EpisodicMemory — хранение истории выполнения задач (краткосрочная память).
 """
 
+import asyncio
+import json
+import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+import aiosqlite
+
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS episodic_steps (
+    step_id       TEXT PRIMARY KEY,
+    task_id       TEXT NOT NULL,
+    timestamp     TEXT NOT NULL,
+    agent_type    TEXT NOT NULL,
+    action        TEXT NOT NULL,
+    result_json   TEXT NOT NULL,
+    metadata_json TEXT
+);
+"""
+
+CREATE_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_task_id ON episodic_steps(task_id);
+"""
+
 
 class EpisodicMemory:
     """
-    In-memory хранилище истории выполнения задач.
-    Dict[task_id, List[step]].
+    SQLite-backed хранилище истории выполнения задач.
+    По умолчанию использует in-memory SQLite для обратной совместимости в тестах.
     """
 
-    def __init__(self) -> None:
-        self._storage: Dict[str, List[Dict[str, Any]]] = {}
+    def __init__(self, db_path: str = ":memory:") -> None:
+        self._db_path = db_path
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(target=self._run_loop, daemon=True)
+        self._thread.start()
+        self._conn: aiosqlite.Connection = self._run(self._open_connection())
+
+    def _run_loop(self) -> None:
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_forever()
+
+    def _run(self, coro: Any) -> Any:
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return future.result()
+
+    async def _open_connection(self) -> aiosqlite.Connection:
+        conn = await aiosqlite.connect(self._db_path)
+        await conn.execute(CREATE_TABLE_SQL)
+        await conn.execute(CREATE_INDEX_SQL)
+        await conn.commit()
+        return conn
+
+    async def _execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
+        await self._conn.execute(sql, params)
+        await self._conn.commit()
+
+    async def _executemany(self, sql: str, params: List[tuple[Any, ...]]) -> None:
+        await self._conn.executemany(sql, params)
+        await self._conn.commit()
+
+    async def _fetchall(
+        self, sql: str, params: tuple[Any, ...] = ()
+    ) -> List[tuple[Any, ...]]:
+        async with self._conn.execute(sql, params) as cursor:
+            return await cursor.fetchall()
+
+    async def _fetchone(
+        self, sql: str, params: tuple[Any, ...] = ()
+    ) -> Optional[tuple[Any, ...]]:
+        async with self._conn.execute(sql, params) as cursor:
+            return await cursor.fetchone()
+
+    @staticmethod
+    def _make_step(
+        step_id: str,
+        timestamp: str,
+        agent_type: str,
+        action: str,
+        result_json: str,
+        metadata_json: Optional[str],
+    ) -> Dict[str, Any]:
+        return {
+            "step_id": step_id,
+            "timestamp": timestamp,
+            "agent_type": agent_type,
+            "action": action,
+            "result": json.loads(result_json),
+            "metadata": json.loads(metadata_json) if metadata_json else {},
+        }
 
     def add_step(
         self,
         task_id: str,
-        agent_type: str,
-        action: str,
-        result: Any,
+        agent_type: Any,
+        action: Optional[str] = None,
+        result: Any = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
@@ -37,18 +116,45 @@ class EpisodicMemory:
         Returns:
             step_id — уникальный идентификатор шага
         """
-        step_id = str(uuid.uuid4())
-        step: Dict[str, Any] = {
-            "step_id": step_id,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "agent_type": agent_type,
-            "action": action,
-            "result": result,
-            "metadata": metadata or {},
-        }
-        if task_id not in self._storage:
-            self._storage[task_id] = []
-        self._storage[task_id].append(step)
+        if isinstance(agent_type, dict) and action is None:
+            step_dict = agent_type
+            step_id = str(step_dict.get("step_id") or uuid.uuid4().hex)
+            timestamp = str(step_dict.get("timestamp") or datetime.now(timezone.utc).isoformat())
+            agent_type_value = str(step_dict.get("agent_type") or "unknown")
+            action_value = str(step_dict.get("action") or "unknown")
+            result_value = step_dict.get("result")
+            metadata_value = step_dict.get("metadata") or {}
+        else:
+            if action is None:
+                raise ValueError("action is required when using positional add_step signature")
+            step_id = uuid.uuid4().hex
+            timestamp = datetime.now(timezone.utc).isoformat()
+            agent_type_value = str(agent_type)
+            action_value = action
+            result_value = result
+            metadata_value = metadata or {}
+
+        result_json = json.dumps(result_value, ensure_ascii=False)
+        metadata_json = json.dumps(metadata_value, ensure_ascii=False)
+
+        self._run(
+            self._execute(
+                """
+                INSERT INTO episodic_steps
+                (step_id, task_id, timestamp, agent_type, action, result_json, metadata_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    step_id,
+                    task_id,
+                    timestamp,
+                    agent_type_value,
+                    action_value,
+                    result_json,
+                    metadata_json,
+                ),
+            )
+        )
         return step_id
 
     def get_history(self, task_id: str) -> List[Dict[str, Any]]:
@@ -58,7 +164,18 @@ class EpisodicMemory:
         Returns:
             Список шагов или пустой список, если задача не найдена
         """
-        return list(self._storage.get(task_id, []))
+        rows = self._run(
+            self._fetchall(
+                """
+                SELECT step_id, timestamp, agent_type, action, result_json, metadata_json
+                FROM episodic_steps
+                WHERE task_id = ?
+                ORDER BY timestamp ASC, rowid ASC
+                """,
+                (task_id,),
+            )
+        )
+        return [self._make_step(*row) for row in rows]
 
     def get_last_step(self, task_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -67,30 +184,99 @@ class EpisodicMemory:
         Returns:
             Последний шаг или None
         """
-        steps = self._storage.get(task_id, [])
-        return steps[-1] if steps else None
+        row = self._run(
+            self._fetchone(
+                """
+                SELECT step_id, timestamp, agent_type, action, result_json, metadata_json
+                FROM episodic_steps
+                WHERE task_id = ?
+                ORDER BY timestamp DESC, rowid DESC
+                LIMIT 1
+                """,
+                (task_id,),
+            )
+        )
+        return self._make_step(*row) if row else None
 
     def clear_task_history(self, task_id: str) -> None:
         """Удаляет всю историю шагов для задачи."""
-        if task_id in self._storage:
-            del self._storage[task_id]
+        self._run(self._execute("DELETE FROM episodic_steps WHERE task_id = ?", (task_id,)))
 
     def add_steps_batch(
         self,
-        steps: List[tuple[str, str, str, Any, Optional[Dict[str, Any]]]],
+        task_or_steps: Any,
+        steps: Optional[List[Dict[str, Any]]] = None,
     ) -> List[str]:
         """
         Batch: добавляет несколько шагов за один вызов.
-        Каждый элемент: (task_id, agent_type, action, result, metadata).
+        Поддерживает два формата:
+        1) add_steps_batch([(task_id, agent_type, action, result, metadata), ...])
+        2) add_steps_batch(task_id, [step_dict, ...])
         """
         step_ids = []
-        for task_id, agent_type, action, result, metadata in steps:
-            step_ids.append(self.add_step(task_id, agent_type, action, result, metadata))
+        payload = []
+
+        if isinstance(task_or_steps, str):
+            task_id = task_or_steps
+            for step in steps or []:
+                step_id = str(step.get("step_id") or uuid.uuid4().hex)
+                timestamp = str(step.get("timestamp") or datetime.now(timezone.utc).isoformat())
+                step_ids.append(step_id)
+                payload.append(
+                    (
+                        step_id,
+                        task_id,
+                        timestamp,
+                        str(step.get("agent_type") or "unknown"),
+                        str(step.get("action") or "unknown"),
+                        json.dumps(step.get("result"), ensure_ascii=False),
+                        json.dumps(step.get("metadata") or {}, ensure_ascii=False),
+                    )
+                )
+        else:
+            for task_id, agent_type, action, result, metadata in task_or_steps:
+                step_id = uuid.uuid4().hex
+                timestamp = datetime.now(timezone.utc).isoformat()
+                step_ids.append(step_id)
+                payload.append(
+                    (
+                        step_id,
+                        task_id,
+                        timestamp,
+                        agent_type,
+                        action,
+                        json.dumps(result, ensure_ascii=False),
+                        json.dumps(metadata or {}, ensure_ascii=False),
+                    )
+                )
+
+        if not payload:
+            return step_ids
+
+        self._run(
+            self._executemany(
+                """
+                INSERT INTO episodic_steps
+                (step_id, task_id, timestamp, agent_type, action, result_json, metadata_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                payload,
+            )
+        )
         return step_ids
 
     def get_all_tasks(self) -> List[str]:
         """Возвращает список всех task_id с непустой историей."""
-        return list(self._storage.keys())
+        rows = self._run(
+            self._fetchall(
+                """
+                SELECT DISTINCT task_id
+                FROM episodic_steps
+                ORDER BY task_id ASC
+                """
+            )
+        )
+        return [row[0] for row in rows]
 
     def get_task_summary(self, task_id: str) -> Dict[str, Any]:
         """
@@ -99,8 +285,15 @@ class EpisodicMemory:
         Returns:
             Dict с step_count, last_step, first_timestamp, last_timestamp
         """
-        steps = self._storage.get(task_id, [])
-        if not steps:
+        count_row = self._run(
+            self._fetchone(
+                "SELECT COUNT(*) FROM episodic_steps WHERE task_id = ?",
+                (task_id,),
+            )
+        )
+        step_count = int(count_row[0]) if count_row else 0
+
+        if step_count == 0:
             return {
                 "task_id": task_id,
                 "step_count": 0,
@@ -108,15 +301,55 @@ class EpisodicMemory:
                 "first_timestamp": None,
                 "last_timestamp": None,
             }
-        first = steps[0]
-        last = steps[-1]
+
+        first_row = self._run(
+            self._fetchone(
+                """
+                SELECT step_id, timestamp, agent_type, action, result_json, metadata_json
+                FROM episodic_steps
+                WHERE task_id = ?
+                ORDER BY timestamp ASC, rowid ASC
+                LIMIT 1
+                """,
+                (task_id,),
+            )
+        )
+        last_row = self._run(
+            self._fetchone(
+                """
+                SELECT step_id, timestamp, agent_type, action, result_json, metadata_json
+                FROM episodic_steps
+                WHERE task_id = ?
+                ORDER BY timestamp DESC, rowid DESC
+                LIMIT 1
+                """,
+                (task_id,),
+            )
+        )
+        first = self._make_step(*first_row) if first_row else None
+        last = self._make_step(*last_row) if last_row else None
+
         return {
             "task_id": task_id,
-            "step_count": len(steps),
+            "step_count": step_count,
             "last_step": last,
-            "first_timestamp": first.get("timestamp"),
-            "last_timestamp": last.get("timestamp"),
+            "first_timestamp": first.get("timestamp") if first else None,
+            "last_timestamp": last.get("timestamp") if last else None,
         }
+
+    def close(self) -> None:
+        """Закрывает соединение и фоновый event loop."""
+        if not self._loop.is_running():
+            return
+        self._run(self._conn.close())
+        self._loop.call_soon_threadsafe(self._loop.stop)
+        self._thread.join(timeout=1)
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
 
 __all__ = ["EpisodicMemory"]

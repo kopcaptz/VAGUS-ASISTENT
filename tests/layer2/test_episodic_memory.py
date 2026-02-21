@@ -9,7 +9,7 @@ def test_add_step_returns_step_id():
     memory = EpisodicMemory()
     step_id = memory.add_step("task123", "coder", "execute_code", "result", {"lines": 10})
     assert step_id
-    assert len(step_id) == 36  # uuid4 format
+    assert len(step_id) == 32  # uuid4().hex format
 
 
 def test_get_history():

@@ -74,12 +74,25 @@ def _create_orchestrator_with_config(
 
     router_kwargs = build_router_kwargs(runtime_config)
     llm_router = LLMRouter(**router_kwargs)
+
+    orchestrator_type = (
+        runtime_config.get("orchestrator_type")
+        or os.getenv("VAGUS_ORCHESTRATOR_TYPE", "task")
+    )
+    if isinstance(orchestrator_type, str):
+        orchestrator_type = orchestrator_type.strip().lower()
+    else:
+        orchestrator_type = "task"
+    layer2_config = runtime_config.get("layer2") if isinstance(runtime_config, dict) else None
+
     orchestrator = create_orchestrator_full(
         llm_router,
         dead_letter_queue=dead_letter_queue,
         task_timeouts=_load_task_timeout_settings(runtime_config),
         error_analytics=error_analytics,
         cluster_config=cluster_settings,
+        orchestrator_type=orchestrator_type,
+        layer2_config=layer2_config,
     )
     return llm_router, orchestrator
 

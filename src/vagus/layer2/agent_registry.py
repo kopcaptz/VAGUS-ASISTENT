@@ -32,5 +32,15 @@ class AgentRegistry:
                 return agent
         return self._agents[0] if self._agents else None
 
+    def find_by_name(self, name: str) -> Optional[BaseAgent]:
+        """Returns agent by name (researcher, coder, analyst, designer)."""
+        name_lower = (name or "").strip().lower()
+        if not name_lower:
+            return None
+        for agent in self._agents:
+            if (getattr(agent, "name", "") or "").lower() == name_lower:
+                return agent
+        return None
+
 
 __all__ = ["AgentRegistry"]
