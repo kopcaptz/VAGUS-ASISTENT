@@ -1,0 +1,51 @@
+# Prometheus alerting rules for Vagus Asistent
+
+groups:
+  - name: vagus-critical
+    rules:
+      - alert: VagusAPIDown
+        expr: up{job="vagus-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Vagus API is down"
+          description: "Vagus API has been down for more than 1 minute."
+
+      - alert: PostgreSQLUnavailable
+        expr: vagus_health_postgres == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL is unavailable"
+          description: "Vagus cannot connect to PostgreSQL for more than 2 minutes."
+
+      - alert: RedisUnavailable
+        expr: vagus_health_redis == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis is unavailable"
+          description: "Vagus cannot connect to Redis for more than 2 minutes."
+
+  - name: vagus-warning
+    rules:
+      - alert: RedisStreamsBacklog
+        expr: sum(vagus_redis_streams_pending) > 1000 or vagus_redis_streams_dlq_count > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis Streams backlog or DLQ growth"
+          description: "Pending messages or DLQ count is high. Check consumer health."
+
+      - alert: PostgresPoolSaturated
+        expr: vagus_postgres_pool_size >= vagus_postgres_pool_max and vagus_postgres_pool_max > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL connection pool saturated"
+          description: "Connection pool is at max capacity. Consider increasing pool size."

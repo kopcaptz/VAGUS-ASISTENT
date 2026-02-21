@@ -1,7 +1,9 @@
 """
 Меж-агентная коммуникация: asyncio.Queue (MVP) -> Redis (production).
-Event Bus: Redis Pub/Sub или in-memory fallback.
+Event Bus: Redis Pub/Sub, Redis Streams, или in-memory fallback.
 """
+
+from __future__ import annotations
 
 import asyncio
 import json
@@ -19,7 +21,7 @@ CHANNEL_TASK_PREFIX = "vagus:events:task:"
 def create_communication_from_config(layer2_config: Optional[dict]) -> "CommunicationLayer":
     """
     Создаёт CommunicationLayer из конфигурации layer2.
-    Читает layer2.communication.redis_url и layer2.communication.event_bus.enabled.
+    Читает layer2.communication.redis_url, event_bus.enabled, event_bus.use_streams.
     """
     comm_cfg = (layer2_config or {}).get("communication") or {}
     if not isinstance(comm_cfg, dict):
@@ -28,11 +30,20 @@ def create_communication_from_config(layer2_config: Optional[dict]) -> "Communic
     event_bus_cfg = comm_cfg.get("event_bus") or {}
     if isinstance(event_bus_cfg, dict):
         event_bus_enabled = event_bus_cfg.get("enabled", True)
+        use_streams = event_bus_cfg.get("use_streams", False)
+        stream_name = event_bus_cfg.get("stream_name", "vagus:events:stream")
+        max_retries = event_bus_cfg.get("max_retries", 3)
     else:
         event_bus_enabled = True
+        use_streams = False
+        stream_name = "vagus:events:stream"
+        max_retries = 3
     return CommunicationLayer(
         redis_url=redis_url if redis_url else None,
         event_bus_enabled=event_bus_enabled,
+        use_streams=use_streams,
+        stream_name=stream_name,
+        max_retries=max_retries,
     )
 
 
@@ -40,7 +51,7 @@ class CommunicationLayer:
     """
     Нервная система агентной системы.
     Pub/Sub по топикам + очередь результатов по task_id.
-    Event Bus: Redis Pub/Sub или in-memory (callbacks).
+    Event Bus: Redis Streams, Redis Pub/Sub, или in-memory (callbacks).
     """
 
     def __init__(
@@ -48,6 +59,9 @@ class CommunicationLayer:
         redis_url: Optional[str] = None,
         *,
         event_bus_enabled: bool = True,
+        use_streams: bool = False,
+        stream_name: str = "vagus:events:stream",
+        max_retries: int = 3,
     ) -> None:
         self.topics: dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
         self.results: dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
@@ -56,38 +70,73 @@ class CommunicationLayer:
         self.logger = get_logger("layer2.communication")
         self._redis_url = redis_url
         self._event_bus_enabled = event_bus_enabled
+        self._use_streams = use_streams
+        self._stream_name = stream_name
+        self._max_retries = max_retries
         self._redis = None
         self._redis_initialized = False
+        self._streams_client: Optional[Any] = None
 
         if redis_url and event_bus_enabled:
-            try:
-                import redis.asyncio as redis  # type: ignore[import-untyped]
-                self._redis = redis.from_url(redis_url, decode_responses=True)
-                self._redis_initialized = True
-                self.logger.info("Event Bus using Redis backend: %s", redis_url[:50] if len(redis_url) > 50 else redis_url)
-            except Exception as exc:
-                self.logger.warning("Redis Event Bus unavailable, fallback to in-memory: %s", exc)
-                self._redis = None
-                self._redis_initialized = False
+            if use_streams:
+                try:
+                    from .redis_streams import RedisStreamsClient
+                    self._streams_client = RedisStreamsClient(
+                        redis_url,
+                        stream_name=stream_name,
+                    )
+                    self._redis_initialized = True
+                    self.logger.info(
+                        "Event Bus using Redis Streams: %s stream=%s",
+                        redis_url[:50] if len(redis_url) > 50 else redis_url,
+                        stream_name,
+                    )
+                except Exception as exc:
+                    self.logger.warning("Redis Streams unavailable, fallback to in-memory: %s", exc)
+                    self._streams_client = None
+                    self._redis_initialized = False
+            else:
+                try:
+                    import redis.asyncio as redis  # type: ignore[import-untyped]
+                    self._redis = redis.from_url(redis_url, decode_responses=True)
+                    self._redis_initialized = True
+                    self.logger.info(
+                        "Event Bus using Redis Pub/Sub: %s",
+                        redis_url[:50] if len(redis_url) > 50 else redis_url,
+                    )
+                except Exception as exc:
+                    self.logger.warning("Redis Event Bus unavailable, fallback to in-memory: %s", exc)
+                    self._redis = None
+                    self._redis_initialized = False
         elif not event_bus_enabled:
             self.logger.debug("Event Bus disabled")
         else:
             self.logger.debug("Event Bus using in-memory backend")
+
+    @property
+    def uses_streams(self) -> bool:
+        """True если Event Bus использует Redis Streams."""
+        return bool(self._streams_client and self._redis_initialized)
 
     async def publish_event(
         self,
         event_type: str,
         payload: dict[str, Any],
         task_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> None:
         """
         Публикует событие в Event Bus.
+        tenant_id включается в payload для TenantContext.
         При redis_url: публикует в vagus:events:system и vagus:events:task:{task_id}.
         При in-memory: вызывает подписчиков event_subscribers.
         При event_bus_enabled=False: no-op.
         """
         if not self._event_bus_enabled:
             return
+
+        if tenant_id is not None:
+            payload = {**payload, "tenant_id": tenant_id}
 
         message = {
             "event": event_type,
@@ -96,7 +145,14 @@ class CommunicationLayer:
             "ts": time.time(),
         }
 
-        if self._redis and self._redis_initialized:
+        if self._streams_client and self._redis_initialized:
+            await self._streams_client.publish_event(
+                event_type,
+                payload,
+                task_id=task_id,
+                tenant_id=tenant_id,
+            )
+        elif self._redis and self._redis_initialized:
             try:
                 raw = json.dumps(message, ensure_ascii=False, default=str)
                 await self._redis.publish(CHANNEL_SYSTEM, raw)
@@ -132,17 +188,40 @@ class CommunicationLayer:
         self.event_subscribers.append(callback)
         self.logger.debug("Subscribed to events (in-memory)")
 
+    def start_stream_consumer(
+        self,
+        group_name: str,
+        consumer_name: str,
+        handler: Callable[[str, dict], Awaitable[None]],
+    ) -> tuple[asyncio.Task[None], asyncio.Event]:
+        """
+        Запускает consumer для Redis Streams. Только при use_streams=True.
+        Возвращает (task, shutdown_event).
+        """
+        if not self._streams_client or not self._redis_initialized:
+            self.logger.warning("start_stream_consumer called but Redis Streams not available")
+            shutdown = asyncio.Event()
+            return asyncio.create_task(asyncio.sleep(0)), shutdown
+        return self._streams_client.start_stream_consumer(
+            self._stream_name,
+            group_name,
+            consumer_name,
+            handler,
+            max_retries=self._max_retries,
+        )
+
     async def subscribe_to_events_redis(
         self,
         callback: Callable[[str, dict], Awaitable[None]],
         channels: Optional[List[str]] = None,
     ) -> asyncio.Task[None]:
         """
-        Подписка на Redis каналы. Запускает фоновую задачу listen с автопереподпиской.
+        Подписка на Redis каналы (Pub/Sub). Запускает фоновую задачу listen.
+        Для Redis Streams используйте start_stream_consumer.
         Возвращает Task для отмены при shutdown.
         """
         if not self._redis or not self._redis_initialized:
-            self.logger.warning("subscribe_to_events_redis called but Redis not available")
+            self.logger.warning("subscribe_to_events_redis called but Redis Pub/Sub not available")
             return asyncio.create_task(asyncio.sleep(0))
 
         target_channels = channels or [CHANNEL_SYSTEM]
@@ -176,6 +255,15 @@ class CommunicationLayer:
 
     async def close(self) -> None:
         """Закрывает Redis соединения."""
+        if self._streams_client:
+            try:
+                await self._streams_client.close()
+                self.logger.debug("Event Bus Redis Streams connection closed")
+            except Exception as exc:
+                self.logger.debug("Error closing Redis Streams: %s", exc)
+            finally:
+                self._streams_client = None
+                self._redis_initialized = False
         if self._redis:
             try:
                 await self._redis.aclose()

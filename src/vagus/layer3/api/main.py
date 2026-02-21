@@ -2,6 +2,7 @@
 FastAPI приложение — точка входа REST API Vagus Asistent.
 """
 
+import asyncio
 import time
 from contextlib import asynccontextmanager
 import os
@@ -29,7 +30,17 @@ from .middleware import (
     RequestSigningMiddleware,
 )
 from .metrics import HTTPMetricsMiddleware, metrics_router
-from .routers import admin_router, agents_router, auth_router, keys_router, plugins_router, status_router, tasks_router
+from .routers import (
+    admin_router,
+    agents_router,
+    auth_router,
+    keys_router,
+    monitoring_router,
+    plugins_router,
+    status_router,
+    tasks_router,
+    websocket_events_router,
+)
 from .websocket_security import WebSocketAuditStorage, WebSocketRuntimeSettings
 
 logger = get_logger("layer3.api.main")
@@ -128,6 +139,17 @@ def _safe_string_list(value: Any) -> list[str]:
     return result
 
 
+def _expand_env_vars(obj: Any) -> Any:
+    """Recursively expand ${VAR} in strings using os.path.expandvars."""
+    if isinstance(obj, dict):
+        return {k: _expand_env_vars(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_expand_env_vars(v) for v in obj]
+    if isinstance(obj, str):
+        return os.path.expandvars(obj)
+    return obj
+
+
 def _load_runtime_yaml_config() -> tuple[dict[str, Any], Optional[Path]]:
     config_candidates: list[Path] = []
     override_config_path = os.getenv("VAGUS_CONFIG_PATH")
@@ -146,6 +168,7 @@ def _load_runtime_yaml_config() -> tuple[dict[str, Any], Optional[Path]]:
             with open(config_path, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
             if isinstance(data, dict):
+                data = _expand_env_vars(data)
                 return data, config_path
         except Exception as exc:
             logger.warning("Failed to load runtime config from %s: %s", config_path, exc)
@@ -349,6 +372,45 @@ async def lifespan(app: FastAPI):
     app.state.llm_router = llm_router
     app.state.orchestrator = orchestrator
     app.state.dead_letter_queue = dead_letter_queue
+    from .routers.tasks import task_store
+    app.state.task_store = task_store
+    app.state.stream_consumer_tasks = []
+    app.state.stream_shutdown_events = []
+
+    # Запуск Redis Streams consumers при use_streams (MasterOrchestrator)
+    from vagus.layer2 import MasterOrchestrator
+    if isinstance(orchestrator, MasterOrchestrator) and hasattr(orchestrator, "event_bus") and orchestrator.event_bus and getattr(orchestrator.event_bus, "uses_streams", False):
+        async def _event_router(event_type: str, message: dict) -> None:
+            data = message.get("data") or {}
+            tenant_id = data.get("tenant_id", "default")
+            task_id = message.get("task_id")
+            if event_type == "task.completed" and orchestrator.memory_consolidation_handler:
+                task_data = {k: v for k, v in data.items() if k != "tenant_id"}
+                task_data.setdefault("task_id", task_id)
+                await orchestrator.memory_consolidation_handler.handle_task_completed(task_data, tenant_id)
+            elif event_type == "quality_gate.passed" and getattr(orchestrator, "synaptic_handler", None):
+                await orchestrator.synaptic_handler.handle_quality_gate_passed(data, tenant_id, task_id)
+            # остальные event_type — игнорируем (handler вызывается из process_events, ACK уже делается там)
+
+        async def _consolidation_handler(event_type: str, message: dict) -> None:
+            if event_type == "task.completed":
+                await _event_router(event_type, message)
+
+        async def _synaptic_handler(event_type: str, message: dict) -> None:
+            if event_type == "quality_gate.passed":
+                await _event_router(event_type, message)
+
+        for group_name, handler in [("memory_consolidation", _consolidation_handler), ("synaptic_training", _synaptic_handler)]:
+            task, shutdown = orchestrator.event_bus.start_stream_consumer(
+                group_name,
+                f"consumer-{group_name}",
+                handler,
+            )
+            app.state.stream_consumer_tasks.append(task)
+            app.state.stream_shutdown_events.append(shutdown)
+        logger.info("Redis Streams consumers started: memory_consolidation, synaptic_training")
+    if isinstance(orchestrator, MasterOrchestrator) and getattr(orchestrator, "synaptic_handler", None):
+        await orchestrator.synaptic_handler.start()
     app.state.error_analytics = error_analytics
     app.state.start_time = time.monotonic()
     app.state.websocket_settings = getattr(app.state, "websocket_settings", WebSocketRuntimeSettings())
@@ -418,6 +480,24 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    try:
+        if hasattr(app.state, "orchestrator") and app.state.orchestrator and getattr(app.state.orchestrator, "synaptic_handler", None):
+            await app.state.orchestrator.synaptic_handler.stop()
+    except Exception as exc:
+        logger.warning("Error stopping synaptic handler: %s", exc)
+    try:
+        for ev in getattr(app.state, "stream_shutdown_events", []):
+            ev.set()
+        for t in getattr(app.state, "stream_consumer_tasks", []):
+            t.cancel()
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
+        if hasattr(app.state, "orchestrator") and app.state.orchestrator and hasattr(app.state.orchestrator, "event_bus") and app.state.orchestrator.event_bus:
+            await app.state.orchestrator.event_bus.close()
+    except Exception as exc:
+        logger.warning("Error stopping stream consumers: %s", exc)
     try:
         if hasattr(app.state, "memory_profiler"):
             await app.state.memory_profiler.stop()
@@ -520,8 +600,10 @@ def create_app() -> FastAPI:
     app.include_router(agents_router, prefix="/api/v1")
     app.include_router(status_router, prefix="/api/v1")
     app.include_router(admin_router, prefix="/api/v1")
+    app.include_router(monitoring_router, prefix="/api/v1")
     app.include_router(plugins_router, prefix="/api/v1")
     app.include_router(keys_router, prefix="/api/v1")
+    app.include_router(websocket_events_router)
     app.include_router(metrics_router)
     app.include_router(health_router)
 

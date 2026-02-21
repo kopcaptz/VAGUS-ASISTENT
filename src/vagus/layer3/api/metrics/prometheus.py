@@ -213,6 +213,48 @@ class PrometheusMetricsRegistry:
             "circuit_breaker_state",
             "Circuit breaker state (0=closed,1=open,2=half-open)",
         )
+        # Production metrics
+        self.vagus_active_tasks = _GaugeMetric(
+            "vagus_active_tasks",
+            "Number of active tasks (pending + in_progress)",
+        )
+        self.vagus_redis_streams_pending = _GaugeMetric(
+            "vagus_redis_streams_pending",
+            "Pending messages per consumer group",
+            ("group",),
+        )
+        self.vagus_redis_streams_dlq_count = _GaugeMetric(
+            "vagus_redis_streams_dlq_count",
+            "DLQ message count",
+        )
+        self.vagus_health_redis = _GaugeMetric(
+            "vagus_health_redis",
+            "Redis availability (1=ok, 0=unavailable)",
+        )
+        self.vagus_postgres_pool_size = _GaugeMetric(
+            "vagus_postgres_pool_size",
+            "Current PostgreSQL connection pool size",
+        )
+        self.vagus_postgres_pool_min = _GaugeMetric(
+            "vagus_postgres_pool_min",
+            "PostgreSQL pool min size",
+        )
+        self.vagus_postgres_pool_max = _GaugeMetric(
+            "vagus_postgres_pool_max",
+            "PostgreSQL pool max size",
+        )
+        self.vagus_health_postgres = _GaugeMetric(
+            "vagus_health_postgres",
+            "PostgreSQL availability (1=ok, 0=unavailable)",
+        )
+        self.vagus_synaptic_buffer_size = _GaugeMetric(
+            "vagus_synaptic_buffer_size",
+            "SynapticTrainingHandler current buffer size",
+        )
+        self.vagus_synaptic_events_processed_total = _GaugeMetric(
+            "vagus_synaptic_events_processed_total",
+            "Total events processed by SynapticTrainingHandler",
+        )
 
     def render(self) -> str:
         parts = [
@@ -224,6 +266,16 @@ class PrometheusMetricsRegistry:
             self.cache_hits_total.render(),
             self.cache_misses_total.render(),
             self.circuit_breaker_state.render(),
+            self.vagus_active_tasks.render(),
+            self.vagus_redis_streams_pending.render(),
+            self.vagus_redis_streams_dlq_count.render(),
+            self.vagus_health_redis.render(),
+            self.vagus_postgres_pool_size.render(),
+            self.vagus_postgres_pool_min.render(),
+            self.vagus_postgres_pool_max.render(),
+            self.vagus_health_postgres.render(),
+            self.vagus_synaptic_buffer_size.render(),
+            self.vagus_synaptic_events_processed_total.render(),
         ]
         return "\n\n".join(parts) + "\n"
 
@@ -236,6 +288,16 @@ class PrometheusMetricsRegistry:
         self.cache_hits_total.reset()
         self.cache_misses_total.reset()
         self.circuit_breaker_state.reset()
+        self.vagus_active_tasks.reset()
+        self.vagus_redis_streams_pending.reset()
+        self.vagus_redis_streams_dlq_count.reset()
+        self.vagus_health_redis.reset()
+        self.vagus_postgres_pool_size.reset()
+        self.vagus_postgres_pool_min.reset()
+        self.vagus_postgres_pool_max.reset()
+        self.vagus_health_postgres.reset()
+        self.vagus_synaptic_buffer_size.reset()
+        self.vagus_synaptic_events_processed_total.reset()
 
 
 prometheus_metrics = PrometheusMetricsRegistry()
@@ -306,14 +368,110 @@ def update_circuit_breaker_state_from_router(llm_router: object) -> None:
     set_circuit_breaker_state(highest)
 
 
+async def _update_vagus_metrics(app: object, orchestrator: object) -> None:
+    """Update vagus-specific metrics from orchestrator and app state."""
+    reg = prometheus_metrics
+
+    # Active tasks
+    task_store = getattr(app, "state", None) and getattr(app.state, "task_store", None)
+    if isinstance(task_store, dict):
+        try:
+            from ..models import TaskStatus
+            active = sum(
+                1 for t in task_store.values()
+                if isinstance(t, dict) and t.get("status") in (TaskStatus.PENDING, TaskStatus.IN_PROGRESS)
+            )
+            reg.vagus_active_tasks.set(float(active))
+        except Exception:
+            reg.vagus_active_tasks.set(0)
+    else:
+        reg.vagus_active_tasks.set(0)
+
+    # Redis Streams + health
+    reg.vagus_health_redis.set(0)
+    reg.vagus_redis_streams_dlq_count.set(0)
+    event_bus = getattr(orchestrator, "event_bus", None)
+    if event_bus and getattr(event_bus, "uses_streams", False):
+        streams_client = getattr(event_bus, "_streams_client", None)
+        redis_client = getattr(streams_client, "_redis", None) if streams_client else None
+        stream_name = getattr(event_bus, "_stream_name", None) or "vagus:events:stream"
+        if redis_client:
+            try:
+                await redis_client.ping()
+                reg.vagus_health_redis.set(1)
+            except Exception:
+                pass
+            try:
+                groups_raw = await redis_client.xinfo_groups(stream_name)
+                reg.vagus_redis_streams_pending.reset()
+                for group_row in (groups_raw or []):
+                    g = group_row if isinstance(group_row, dict) else (
+                        dict(zip(group_row[::2], group_row[1::2]))
+                        if isinstance(group_row, (list, tuple)) and len(group_row) >= 2
+                        else {}
+                    )
+                    if isinstance(g, dict):
+                        name = str(g.get("name") or g.get(b"name", "") or "").strip()
+                        pending = int(g.get("pending") or g.get(b"pending", 0) or 0)
+                        if name:
+                            reg.vagus_redis_streams_pending.set(float(pending), name)
+                dlq_name = f"{stream_name}_dlq"
+                dlq_count = await redis_client.xlen(dlq_name)
+                reg.vagus_redis_streams_dlq_count.set(float(dlq_count))
+            except Exception:
+                pass
+
+    # PostgreSQL pool + health
+    reg.vagus_health_postgres.set(0)
+    memory_manager = getattr(orchestrator, "memory_manager", None)
+    artifact_kb = None
+    if memory_manager:
+        artifact_kb = getattr(memory_manager, "_artifact_kb", None) or getattr(memory_manager, "artifact_kb", None)
+    if artifact_kb and hasattr(artifact_kb, "_pool") and artifact_kb._pool is not None:
+        try:
+            async with artifact_kb._pool.acquire() as conn:
+                await conn.fetchval("SELECT 1")
+                reg.vagus_health_postgres.set(1)
+            pool_size = len(getattr(artifact_kb._pool, "_holders", []))
+            reg.vagus_postgres_pool_size.set(float(pool_size))
+            reg.vagus_postgres_pool_min.set(float(getattr(artifact_kb, "_min_size", 0)))
+            reg.vagus_postgres_pool_max.set(float(getattr(artifact_kb, "_max_size", 0)))
+        except Exception:
+            reg.vagus_postgres_pool_size.reset()
+            reg.vagus_postgres_pool_min.reset()
+            reg.vagus_postgres_pool_max.reset()
+    else:
+        reg.vagus_postgres_pool_size.reset()
+        reg.vagus_postgres_pool_min.reset()
+        reg.vagus_postgres_pool_max.reset()
+
+    # Synaptic buffer
+    synaptic_handler = getattr(orchestrator, "synaptic_handler", None)
+    if synaptic_handler and hasattr(synaptic_handler, "get_stats"):
+        try:
+            stats = synaptic_handler.get_stats()
+            reg.vagus_synaptic_buffer_size.set(float(stats.get("buffer_size", 0)))
+            reg.vagus_synaptic_events_processed_total.set(float(stats.get("events_processed", 0)))
+        except Exception:
+            reg.vagus_synaptic_buffer_size.set(0)
+            reg.vagus_synaptic_events_processed_total.set(0)
+    else:
+        reg.vagus_synaptic_buffer_size.set(0)
+        reg.vagus_synaptic_events_processed_total.set(0)
+
+
 router = APIRouter(tags=["Monitoring"])
 
 
 @router.get("/metrics", include_in_schema=False)
 async def prometheus_metrics_endpoint(request: Request) -> Response:
-    llm_router = getattr(request.app.state, "llm_router", None)
+    app = request.app
+    llm_router = getattr(app.state, "llm_router", None)
+    orchestrator = getattr(app.state, "orchestrator", None)
     if llm_router is not None:
         update_circuit_breaker_state_from_router(llm_router)
+    if orchestrator is not None:
+        await _update_vagus_metrics(app, orchestrator)
     return Response(
         content=prometheus_metrics.render(),
         media_type="text/plain; version=0.0.4; charset=utf-8",

@@ -26,6 +26,11 @@ class TaskCreateRequest(BaseModel):
         max_length=50000,
         description="Основной запрос для выполнения агентом",
     )
+    goal: Optional[str] = Field(
+        default=None,
+        max_length=10000,
+        description="Целевой результат для сложных многошаговых задач",
+    )
     task_type: str = Field(
         default="default",
         description="Тип задачи: 'research', 'code', 'analysis', 'default'",
@@ -68,6 +73,33 @@ class TaskStatusResponse(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
+
+
+class TaskResponse(BaseModel):
+    """Расширенный ответ задачи с plan, quality_score, reflection_count."""
+
+    task_id: str
+    status: TaskStatus
+    result: Optional[Any] = None
+    error: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+    plan: Optional[Any] = Field(
+        default=None,
+        description="Сгенерированный план выполнения",
+    )
+    quality_score: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="Итоговая оценка качества",
+    )
+    reflection_count: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Количество итераций рефлексии",
+    )
 
 
 class TaskListItem(BaseModel):

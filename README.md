@@ -13,7 +13,7 @@
 ┌──────────────────────────▼──────────────────────────────────┐
 │              СЛОЙ 2: АГЕНТНАЯ СИСТЕМА                       │
 │  TaskOrchestrator │ Agents (Researcher, Coder, Analyst)     │
-│  EpisodicMemory │ SemanticMemory │ CommunicationLayer       │
+│  EpisodicMemory │ SemanticMemory │ MemoryManager │ ArtifactKnowledgeBase │
 └──────────────────────────┬──────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────┐
@@ -38,7 +38,7 @@
   - Кэширование с TTL, бюджетирование, мониторинг (SQLite)
 - **Слой 2**: Агентная система
   - 3 агента: Researcher, Coder, Analyst
-  - 2 типа памяти: Episodic (краткосрочная), Semantic (векторный поиск)
+  - Память: Episodic (краткосрочная), Semantic (векторный поиск), MemoryManager, ArtifactKnowledgeBase
   - Параллельное и многошаговое выполнение задач
   - Dead Letter Queue (DLQ), task timeouts, graceful degradation
 - **Слой 3**: Интерфейсы
@@ -55,7 +55,7 @@
 
 ## Требования
 
-- Python 3.10+
+- Python 3.12+
 - pip
 
 ## Быстрый старт
@@ -336,6 +336,7 @@ VAGUS-ASISTENT/
 │   ├── layer0/          # Конфигурация, логирование
 │   ├── layer1/          # LLM Router, провайдеры, кэш, бюджет
 │   ├── layer2/          # Агенты, оркестратор, память
+│   │   └── memory/      # Episodic, Semantic, Procedural, MemoryManager, ArtifactKnowledgeBase
 │   └── layer3/          # REST API, CLI, каналы
 │       ├── api/         # FastAPI + JWT + WebSocket
 │       ├── cli/         # Typer CLI

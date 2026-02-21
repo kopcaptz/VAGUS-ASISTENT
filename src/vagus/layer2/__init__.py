@@ -113,6 +113,29 @@ def create_master_orchestrator_full(
     shared_blackboard = create_blackboard_from_config(layer2)
     event_bus = create_communication_from_config(layer2)
     conversation_summarizer = create_conversation_summarizer_from_config(llm_router, layer2)
+    from .memory import (
+        CoherenceMonitor,
+        MemoryConsolidationHandler,
+        MemoryManager,
+        SynapticTrainingHandler,
+        create_artifact_kb_from_config,
+    )
+
+    artifact_kb = create_artifact_kb_from_config(layer2)
+    memory_manager = MemoryManager(
+        procedural_memory=procedural_memory,
+        artifact_kb=artifact_kb,
+    )
+    coherence_monitor = CoherenceMonitor(
+        summarizer=conversation_summarizer,
+        threshold_steps=int((layer2.get("coherence") or {}).get("threshold_steps", 10)),
+    )
+    memory_consolidation_handler = MemoryConsolidationHandler(
+        episodic_memory=memory_manager.episodic,
+        semantic_memory=memory_manager.semantic,
+        procedural_memory=procedural_memory,
+    )
+    synaptic_handler = SynapticTrainingHandler(artifact_kb=artifact_kb)
     skill_system = SkillSystem()
     from ..plugins import PluginManager
 
@@ -134,6 +157,10 @@ def create_master_orchestrator_full(
         event_bus=event_bus,
         procedural_memory=procedural_memory,
         conversation_summarizer=conversation_summarizer,
+        memory_manager=memory_manager,
+        coherence_monitor=coherence_monitor,
+        memory_consolidation_handler=memory_consolidation_handler,
+        synaptic_handler=synaptic_handler,
         config=layer2.get("master_orchestrator"),
     )
 

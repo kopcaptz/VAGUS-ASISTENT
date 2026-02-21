@@ -75,12 +75,20 @@ class VagusAPIClient:
             pass
         return False
 
-    def create_task(self, prompt: str, task_type: str = "default") -> Dict[str, Any]:
+    def create_task(
+        self,
+        prompt: str,
+        task_type: str = "default",
+        goal: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Создать задачу."""
+        payload: Dict[str, Any] = {"prompt": prompt, "task_type": task_type}
+        if goal:
+            payload["goal"] = goal
         with self._client(timeout=30) as client:
             resp = client.post(
                 f"{self.base_url}/tasks",
-                json={"prompt": prompt, "task_type": task_type},
+                json=payload,
                 headers=self._headers,
             )
         resp.raise_for_status()
@@ -151,6 +159,63 @@ class VagusAPIClient:
         with self._client(timeout=10) as client:
             resp = client.get(
                 f"{self.root_url}/health/detailed",
+                headers=self._headers,
+            )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_monitoring_redis(self) -> Dict[str, Any]:
+        """Redis Streams метрики: consumer groups, pending, DLQ."""
+        if not HTTPX_AVAILABLE:
+            return {}
+        with self._client(timeout=10) as client:
+            resp = client.get(
+                f"{self.base_url}/monitoring/redis",
+                headers=self._headers,
+            )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_monitoring_postgres(self) -> Dict[str, Any]:
+        """PostgreSQL/SQLite метрики: артефакты, связи, pool."""
+        if not HTTPX_AVAILABLE:
+            return {}
+        with self._client(timeout=10) as client:
+            resp = client.get(
+                f"{self.base_url}/monitoring/postgres",
+                headers=self._headers,
+            )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_monitoring_artifact_graph(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        limit: int = 500,
+    ) -> Dict[str, Any]:
+        """Граф артефактов: узлы и рёбра для визуализации."""
+        if not HTTPX_AVAILABLE:
+            return {}
+        params: List[str] = [f"limit={int(limit)}"]
+        if tenant_id:
+            params.append(f"tenant_id={tenant_id}")
+        query = "&".join(params)
+        with self._client(timeout=15) as client:
+            resp = client.get(
+                f"{self.base_url}/monitoring/artifact-graph?{query}",
+                headers=self._headers,
+            )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_monitoring_synaptic(self) -> Dict[str, Any]:
+        """Метрики SynapticTrainingHandler: buffer, flush, events."""
+        if not HTTPX_AVAILABLE:
+            return {}
+        with self._client(timeout=10) as client:
+            resp = client.get(
+                f"{self.base_url}/monitoring/synaptic",
                 headers=self._headers,
             )
         resp.raise_for_status()

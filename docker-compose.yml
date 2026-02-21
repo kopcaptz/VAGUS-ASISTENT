@@ -56,10 +56,24 @@ services:
 
   redis:
     image: redis:7-alpine
+    container_name: vagus-redis
     ports:
       - "6379:6379"
     volumes:
       - redis-data:/data
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: vagus-postgres
+    environment:
+      POSTGRES_USER: vagus
+      POSTGRES_PASSWORD: vagus_password
+      POSTGRES_DB: vagus_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
 
   chromadb:
@@ -89,4 +103,5 @@ services:
 volumes:
   api-data:
   redis-data:
+  postgres_data:
   chroma-data:

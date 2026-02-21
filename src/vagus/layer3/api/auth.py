@@ -28,7 +28,7 @@ if not SECRET_KEY:
         "Generate a secure key with: python -c \"import secrets; print(secrets.token_urlsafe(64))\""
     )
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_SECONDS = 900  # 15 min
+ACCESS_TOKEN_EXPIRE_SECONDS = 3153600000  # ~100 years (effectively no expiry for local admin)
 REFRESH_TOKEN_EXPIRE_SECONDS = 604800  # 7 days
 
 

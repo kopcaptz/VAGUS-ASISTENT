@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import aiosqlite
 
@@ -20,16 +20,21 @@ if TYPE_CHECKING:
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS procedural_plans (
     plan_id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
     intent_summary TEXT NOT NULL,
     plan_json TEXT NOT NULL,
-    success_score REAL DEFAULT 1.0,
-    created_at TEXT DEFAULT (datetime('now')),
-    usage_count INTEGER DEFAULT 0
+    success_score REAL DEFAULT 0.5,
+    usage_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 """
 
 CREATE_INDEX_SQL = """
 CREATE INDEX IF NOT EXISTS idx_created_at ON procedural_plans(created_at);
+"""
+
+CREATE_INDEX_TENANT_SQL = """
+CREATE INDEX IF NOT EXISTS idx_procedural_tenant ON procedural_plans(tenant_id);
 """
 
 
@@ -72,53 +77,65 @@ class ProceduralMemory:
 
     def __init__(
         self,
-        db_path: str = "data/procedural.db",
+        db_path: str = ":memory:",
         *,
         enabled: bool = True,
     ) -> None:
-        self._db_path = db_path
-        self.enabled = enabled
+        self.db_path = db_path
         self._conn: Optional[aiosqlite.Connection] = None
+        self.enabled = enabled
         self.logger = get_logger("layer2.memory.procedural")
 
     async def _ensure_conn(self) -> aiosqlite.Connection:
         """Lazy connect при первом вызове."""
         if self._conn is None:
-            self._conn = await aiosqlite.connect(self._db_path)
+            self._conn = await aiosqlite.connect(self.db_path)
             await self._conn.execute(CREATE_TABLE_SQL)
             await self._conn.execute(CREATE_INDEX_SQL)
+            await self._conn.execute(CREATE_INDEX_TENANT_SQL)
             await self._conn.commit()
-            self.logger.debug("ProceduralMemory connected to %s", self._db_path)
+            self.logger.debug("ProceduralMemory connected to %s", self.db_path)
         return self._conn
 
     async def save_plan(
         self,
-        plan: "TaskPlan",
+        tenant_id: Union[str, "TaskPlan"],
         intent_summary: str,
-        success_score: float = 1.0,
+        plan_json: str = "",
+        success_score: float = 0.5,
     ) -> str:
         """
         Сохраняет план в базу.
-        Генерирует новый plan_id.
+        Генерирует plan_id как UUID4.
         Возвращает plan_id.
+
+        Args:
+            tenant_id: Идентификатор tenant (или plan dict для backward compat).
+            intent_summary: Краткое описание намерения.
+            plan_json: JSON-строка плана (или пустая при backward compat).
+            success_score: Оценка успешности 0..1.
+
+        Backward compat: save_plan(plan, intent_summary, success_score) — первый
+        аргумент dict трактуется как plan, tenant_id="default".
         """
         if not self.enabled:
             return ""
 
+        if isinstance(tenant_id, dict):
+            plan = dict(tenant_id)
+            plan_json = json.dumps(plan, ensure_ascii=False, default=str)
+            tenant_id = "default"
+
         conn = await self._ensure_conn()
         plan_id = uuid.uuid4().hex
-
-        plan_copy = dict(plan)
-        plan_copy["plan_id"] = plan_id
-        plan_json = json.dumps(plan_copy, ensure_ascii=False, default=str)
         success_score = max(0.0, min(1.0, success_score))
 
         await conn.execute(
             """
-            INSERT INTO procedural_plans (plan_id, intent_summary, plan_json, success_score)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO procedural_plans (plan_id, tenant_id, intent_summary, plan_json, success_score)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (plan_id, intent_summary, plan_json, success_score),
+            (plan_id, str(tenant_id), intent_summary, plan_json, success_score),
         )
         await conn.commit()
         self.logger.debug("Saved plan %s with intent_summary=%s", plan_id, intent_summary[:50])
@@ -126,39 +143,51 @@ class ProceduralMemory:
 
     async def find_similar_plan(
         self,
-        intent: "IntentResult",
+        tenant_id: Union[str, "IntentResult"],
+        intent_summary: str = "",
         threshold: float = 0.7,
-    ) -> Optional["TaskPlan"]:
+    ) -> Optional[Dict[str, Any]]:
         """
-        Ищет похожий план по intent_summary.
-        Возвращает план если similarity >= threshold, иначе None.
-        При равном сходстве выбирает план с max(success_score * (1 + 0.1*usage_count)).
+        Ищет похожий план по intent_summary (простой текстовый поиск Jaccard).
+        Фильтрует по tenant_id. Возвращает план с наибольшим success_score.
+
+        Backward compat: find_similar_plan(intent, threshold) — первый аргумент
+        dict трактуется как IntentResult, tenant_id="default".
         """
         if not self.enabled:
             return None
 
+        if isinstance(tenant_id, dict):
+            intent_summary = intent_to_summary(tenant_id)
+            tenant_id = "default"
+
         conn = await self._ensure_conn()
-        query_summary = intent_to_summary(intent)
-        if not query_summary.strip():
+        if not (intent_summary or "").strip():
             return None
 
         async with conn.execute(
-            "SELECT plan_id, intent_summary, plan_json, success_score, usage_count FROM procedural_plans"
+            """
+            SELECT plan_id, tenant_id, intent_summary, plan_json, success_score, usage_count
+            FROM procedural_plans
+            WHERE tenant_id = ?
+            """,
+            (str(tenant_id),),
         ) as cursor:
             rows = await cursor.fetchall()
 
         candidates: List[tuple[float, float, Dict[str, Any]]] = []
 
         for row in rows:
-            stored_plan_id, stored_summary, plan_json_str, success_score, usage_count = row
-            sim = _similarity(query_summary, stored_summary or "")
+            stored_plan_id, stored_tenant, stored_summary, plan_json_str, success_score, usage_count = row
+            sim = _similarity(intent_summary, stored_summary or "")
             if sim < threshold:
                 continue
 
-            rank = float(success_score or 1.0) * (1.0 + 0.1 * (usage_count or 0))
+            rank = float(success_score or 0.5) * (1.0 + 0.1 * (usage_count or 0))
             try:
                 plan_data = json.loads(plan_json_str)
-                if isinstance(plan_data, dict) and "steps" in plan_data:
+                if isinstance(plan_data, dict):
+                    plan_data["plan_id"] = stored_plan_id
                     candidates.append((sim, rank, plan_data))
             except (json.JSONDecodeError, TypeError):
                 continue
@@ -169,21 +198,31 @@ class ProceduralMemory:
         candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
         return candidates[0][2]
 
-    async def increment_usage_count(self, plan_id: str) -> None:
-        """Увеличивает usage_count для плана."""
+    async def increment_usage(self, plan_id: str, tenant_id: str) -> None:
+        """
+        Увеличивает usage_count на 1 для плана.
+        Обновляет только если plan_id и tenant_id совпадают.
+        """
         if not self.enabled:
             return
 
         conn = await self._ensure_conn()
         await conn.execute(
-            "UPDATE procedural_plans SET usage_count = usage_count + 1 WHERE plan_id = ?",
-            (plan_id,),
+            """
+            UPDATE procedural_plans SET usage_count = usage_count + 1
+            WHERE plan_id = ? AND tenant_id = ?
+            """,
+            (plan_id, tenant_id),
         )
         await conn.commit()
-        self.logger.debug("Incremented usage_count for plan %s", plan_id)
+        self.logger.debug("Incremented usage_count for plan %s (tenant=%s)", plan_id, tenant_id)
+
+    async def increment_usage_count(self, plan_id: str) -> None:
+        """Backward compat: вызывает increment_usage(plan_id, "default")."""
+        await self.increment_usage(plan_id, "default")
 
     async def get_plan(self, plan_id: str) -> Optional["TaskPlan"]:
-        """Получает план по ID."""
+        """Получает план по ID. plan_id в результате — DB key (может отличаться от JSON)."""
         if not self.enabled:
             return None
 
@@ -199,7 +238,10 @@ class ProceduralMemory:
 
         try:
             data = json.loads(row[0])
-            return data if isinstance(data, dict) and "steps" in data else None
+            if not isinstance(data, dict) or "steps" not in data:
+                return None
+            data["plan_id"] = plan_id
+            return data
         except (json.JSONDecodeError, TypeError):
             return None
 

@@ -1,0 +1,202 @@
+# Vagus Asistent - production конфигурация
+# Переменные ${POSTGRES_*}, ${REDIS_HOST} подставляются через os.path.expandvars
+
+version: 1
+name: Vagus Asistent
+global:
+  default_model: gpt-4o-mini
+  log_level: INFO
+  workspace_path: ./workspace
+  max_concurrent_requests: 10
+  api_timeout: 30
+
+websocket:
+  max_message_size_mb: 10
+  ping_interval_seconds: 30
+  ping_timeout_seconds: 60
+
+security:
+  admin_ip_whitelist:
+    - "127.0.0.1"
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+  enable_request_signing: false
+  request_signing_ttl_seconds: 300
+  request_signing_credentials_path: "~/.vagus/client_credentials.json"
+  audit_db_path: "audit_trail.db"
+  dead_letter_queue_db_path: "dead_letter_queue.db"
+  error_analytics_db_path: "error_analytics.db"
+  rate_limit:
+    anonymous_requests_per_minute: 10
+    user_requests_per_minute: 100
+    admin_requests_per_minute: 1000
+    redis_url: "redis://${REDIS_HOST}:6379/0"
+
+jwt:
+  secret_rotation_days: 30
+  max_old_secrets: 3
+
+secrets:
+  backend: local
+  vault_addr: http://localhost:8200
+  vault_token: ""
+
+key_backup:
+  enabled: true
+  schedule: "0 2 * * *"
+  retention_days: 7
+  encryption_password: null
+  backup_dir: "~/.vagus/backups"
+  max_backups: 10
+
+plugins:
+  enabled: true
+  auto_discover: true
+  scan_directories:
+    - "./plugins"
+    - "~/.vagus/plugins"
+  sandbox:
+    enabled: true
+    memory_limit_mb: 512
+    timeout_seconds: 30
+    filesystem_whitelist:
+      - "/tmp"
+      - "./data"
+    network_whitelist:
+      - "api.openai.com"
+      - "api.anthropic.com"
+  security:
+    require_signatures: true
+    trusted_keys: []
+    max_plugin_dependencies: 10
+    banned_imports:
+      - "os.system"
+      - "subprocess.Popen"
+      - "ctypes"
+  hot_reload:
+    enabled: false
+    watch_directories: ["./plugins", "~/.vagus/plugins"]
+    debounce_ms: 500
+  marketplace:
+    url: "https://plugins.vagus.ai"
+    cache_ttl_hours: 24
+
+providers:
+  openai:
+    endpoint: https://api.openai.com/v1
+    rate_limit: 60
+    timeout: 30
+    enabled: true
+    models: [gpt-4o, gpt-4o-mini]
+  anthropic:
+    endpoint: https://api.anthropic.com
+    rate_limit: 60
+    timeout: 30
+    enabled: true
+    models: [claude-3-5-sonnet, claude-3-haiku]
+  deepseek:
+    endpoint: https://api.deepseek.com/v1
+    rate_limit: 60
+    timeout: 30
+    enabled: true
+    models: [deepseek-chat]
+
+layer1:
+  http:
+    max_connections: 100
+    max_keepalive_connections: 20
+    keepalive_expiry: 5.0
+  router:
+    enable_cache: true
+    enable_budgeting: true
+    enable_monitoring: true
+    default_strategy: hybrid
+  cache:
+    ttl_seconds: 3600
+    max_size_mb: 100
+    secondary:
+      enabled: true
+      redis_url: "redis://${REDIS_HOST}:6379/0"
+      sqlite_fallback_path: cache_fallback.db
+      llm_responses_ttl_seconds: 3600
+      provider_health_ttl_seconds: 120
+      rate_limit_counter_ttl_seconds: 60
+      session_data_ttl_seconds: 3600
+  budgeting:
+    daily_limit_usd: 10.0
+    monthly_limit_usd: 200.0
+  monitoring:
+    db_path: metrics.db
+    retention_days: 30
+  retry:
+    max_attempts: 5
+    backoff_factor: 2.0
+    retryable_errors: ["timeout", "rate_limit", "network_error"]
+
+retry:
+  max_attempts: 5
+  backoff_factor: 2.0
+  retryable_errors: ["timeout", "rate_limit", "network_error"]
+
+task_timeouts:
+  researcher: 300
+  coder: 600
+  analyst: 180
+
+layer2:
+  knowledge_base:
+    backend: "postgres"
+    postgres_url: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:5432/${POSTGRES_DB}"
+  conversation_summarizer:
+    enabled: true
+    max_input_steps: 50
+    min_summary_words: 50
+    max_summary_words: 500
+  procedural_memory:
+    enabled: true
+    db_path: "data/procedural.db"
+    similarity_threshold: 0.7
+  communication:
+    redis_url: "redis://${REDIS_HOST}:6379/0"
+    event_bus:
+      enabled: true
+      use_streams: true
+      stream_name: vagus:events:stream
+      max_retries: 3
+  blackboard:
+    redis_url: "redis://${REDIS_HOST}:6379/0"
+    ttl_hours: 24
+  intent_classifier:
+    confidence_threshold: 0.5
+  task_planner:
+    max_steps: 10
+  master_orchestrator:
+    enable_reflexion: false
+    enable_evaluator: false
+  cluster:
+    enabled: false
+    node_id: node-local
+    stateless_agents: true
+    shared_task_queue:
+      enabled: false
+      redis_url: "redis://${REDIS_HOST}:6379/0"
+      queue_name: vagus:cluster:tasks
+    distributed_locking:
+      enabled: false
+      redis_url: "redis://${REDIS_HOST}:6379/0"
+      lock_ttl_seconds: 900
+
+monitoring:
+  memory_profiler:
+    enabled: true
+    interval_seconds: 30
+    history_limit: 1024
+    leak_threshold_mb: 100.0
+    leak_window_seconds: 300
+  health:
+    thresholds:
+      disk_free_percent_min: 10.0
+      memory_usage_percent_max: 90.0
+      check_timeout_seconds: 2.0
+      disk_path: "."

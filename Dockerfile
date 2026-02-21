@@ -12,6 +12,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ src/
 COPY configs/ configs/
 COPY dashboard/ dashboard/
+COPY alembic.ini .
+COPY alembic/ alembic/
 
 ENV PYTHONPATH=/app/src
 ENV PYTHONUNBUFFERED=1

@@ -34,6 +34,7 @@ ENV/
 # Environment — never commit secrets
 .env
 .env.local
+.admin_session
 .env.*.local
 .env.production
 .env.staging

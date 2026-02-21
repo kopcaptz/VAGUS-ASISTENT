@@ -1,0 +1,31 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "reqps"},"overrides": []}, "gridPos": {"h": 6, "w": 6, "x": 0, "y": 0}, "id": 1, "targets": [{"expr": "sum(rate(http_requests_total[5m]))", "legendFormat": "RPS", "refId": "A"}], "title": "HTTP Throughput", "type": "timeseries"},
+    {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "percent"},"overrides": []}, "gridPos": {"h": 6, "w": 6, "x": 6, "y": 0}, "id": 2, "targets": [{"expr": "(sum(rate(http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_requests_total[5m])), 1e-9)) * 100", "legendFormat": "5xx error rate", "refId": "A"}], "title": "Error Rate (5xx)", "type": "timeseries"},
+    {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "s"},"overrides": []}, "gridPos": {"h": 6, "w": 6, "x": 12, "y": 0}, "id": 3, "targets": [{"expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95", "refId": "A"}], "title": "HTTP Latency p95", "type": "timeseries"},
+    {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "none"},"overrides": []}, "gridPos": {"h": 6, "w": 6, "x": 18, "y": 0}, "id": 4, "targets": [{"expr": "vagus_active_tasks", "legendFormat": "active tasks", "refId": "A"}], "title": "Active Tasks", "type": "timeseries"},
+    {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "none","thresholds": {"mode": "absolute","steps": [{"color": "red","value": null},{"color": "green","value": 1}]}},"overrides": []}, "gridPos": {"h": 4, "w": 4, "x": 0, "y": 6}, "id": 10, "targets": [{"expr": "vagus_health_postgres", "legendFormat": "PostgreSQL", "refId": "A"}], "title": "PostgreSQL Health", "type": "gauge"},
+    {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "none","thresholds": {"mode": "absolute","steps": [{"color": "red","value": null},{"color": "green","value": 1}]}},"overrides": []}, "gridPos": {"h": 4, "w": 4, "x": 4, "y": 6}, "id": 11, "targets": [{"expr": "vagus_health_redis", "legendFormat": "Redis", "refId": "A"}], "title": "Redis Health", "type": "gauge"},
+    {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "none"},"overrides": []}, "gridPos": {"h": 6, "w": 12, "x": 0, "y": 10}, "id": 5, "targets": [{"expr": "vagus_redis_streams_pending", "legendFormat": "{{group}}", "refId": "A"}], "title": "Redis Streams Pending by Group", "type": "timeseries"},
+    {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "none"},"overrides": []}, "gridPos": {"h": 6, "w": 6, "x": 12, "y": 10}, "id": 6, "targets": [{"expr": "vagus_redis_streams_dlq_count", "legendFormat": "DLQ", "refId": "A"}], "title": "Redis Streams DLQ Count", "type": "timeseries"},
+    {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "none"},"overrides": []}, "gridPos": {"h": 6, "w": 6, "x": 18, "y": 10}, "id": 7, "targets": [{"expr": "vagus_synaptic_buffer_size", "legendFormat": "buffer size", "refId": "A"}], "title": "Synaptic Buffer Size", "type": "timeseries"},
+    {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "none"},"overrides": []}, "gridPos": {"h": 6, "w": 8, "x": 0, "y": 16}, "id": 8, "targets": [{"expr": "vagus_postgres_pool_size", "legendFormat": "current", "refId": "A"}, {"expr": "vagus_postgres_pool_min", "legendFormat": "min", "refId": "B"}, {"expr": "vagus_postgres_pool_max", "legendFormat": "max", "refId": "C"}], "title": "PostgreSQL Connection Pool", "type": "timeseries"},
+    {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "none"},"overrides": []}, "gridPos": {"h": 6, "w": 8, "x": 8, "y": 16}, "id": 9, "targets": [{"expr": "vagus_synaptic_events_processed_total", "legendFormat": "events", "refId": "A"}], "title": "Synaptic Events Processed", "type": "timeseries"},
+    {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "none"},"overrides": []}, "gridPos": {"h": 6, "w": 8, "x": 16, "y": 16}, "id": 12, "targets": [{"expr": "websocket_connections_active", "legendFormat": "connections", "refId": "A"}], "title": "WebSocket Connections", "type": "timeseries"}
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["vagus", "production"],
+  "templating": {"list": []},
+  "time": {"from": "now-24h", "to": "now"},
+  "timezone": "",
+  "title": "Vagus Production Overview",
+  "version": 1
+}

@@ -49,6 +49,22 @@ def test_create_task_with_metadata(client, admin_headers):
     assert resp.status_code == 201
 
 
+def test_create_task_with_goal(client, admin_headers):
+    resp = client.post(
+        "/api/v1/tasks",
+        json={
+            "prompt": "Analyze the dataset",
+            "goal": "Produce a summary report with actionable insights",
+        },
+        headers=admin_headers,
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert "task_id" in data
+    assert data["status"] == "pending"
+    assert task_store[data["task_id"]]["metadata"].get("goal") == "Produce a summary report with actionable insights"
+
+
 def test_get_task_status_found(client, admin_headers):
     create_resp = client.post(
         "/api/v1/tasks",
@@ -61,6 +77,45 @@ def test_get_task_status_found(client, admin_headers):
     assert resp.status_code == 200
     data = resp.json()
     assert data["task_id"] == task_id
+    assert "plan" in data
+    assert "quality_score" in data
+    assert "reflection_count" in data
+
+
+def test_get_task_extra_fields_default_none(client, admin_headers):
+    create_resp = client.post(
+        "/api/v1/tasks",
+        json={"prompt": "Simple task"},
+        headers=admin_headers,
+    )
+    task_id = create_resp.json()["task_id"]
+
+    resp = client.get(f"/api/v1/tasks/{task_id}", headers=admin_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["plan"] is None
+    assert data["quality_score"] is None
+    assert data["reflection_count"] is None
+
+
+def test_get_task_returns_plan_quality_reflection(client, admin_headers):
+    create_resp = client.post(
+        "/api/v1/tasks",
+        json={"prompt": "Task with metadata"},
+        headers=admin_headers,
+    )
+    task_id = create_resp.json()["task_id"]
+
+    task_store[task_id]["plan"] = {"steps": [{"step_id": "s1", "agent_type": "coder"}]}
+    task_store[task_id]["quality_score"] = 0.85
+    task_store[task_id]["reflection_count"] = 2
+
+    resp = client.get(f"/api/v1/tasks/{task_id}", headers=admin_headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["plan"] == {"steps": [{"step_id": "s1", "agent_type": "coder"}]}
+    assert data["quality_score"] == 0.85
+    assert data["reflection_count"] == 2
 
 
 def test_get_task_status_not_found(client, admin_headers):

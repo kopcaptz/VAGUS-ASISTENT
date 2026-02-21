@@ -89,11 +89,15 @@ class TaskPlanner:
     async def create_plan(self, intent: IntentResult) -> TaskPlan:
         """Создаёт план выполнения на основе результата классификации намерений."""
         if self.procedural_memory and self.procedural_memory.enabled:
+            from .memory.procedural import intent_to_summary
+            intent_summary = intent_to_summary(intent)
             similar = await self.procedural_memory.find_similar_plan(
-                intent, threshold=self._similarity_threshold
+                "default", intent_summary, threshold=self._similarity_threshold
             )
             if similar:
-                await self.procedural_memory.increment_usage_count(similar.get("plan_id", ""))
+                await self.procedural_memory.increment_usage(
+                    similar.get("plan_id", ""), "default"
+                )
                 plan_id = similar.get("plan_id", "")
                 new_plan_id = f"plan_{uuid.uuid4().hex[:12]}"
                 result = dict(similar)

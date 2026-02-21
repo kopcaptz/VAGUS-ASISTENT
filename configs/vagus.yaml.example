@@ -143,6 +143,10 @@ task_timeouts:
   analyst: 180
 
 layer2:
+  knowledge_base:
+    backend: "sqlite"  # или "postgres"
+    sqlite_path: "data/artifact_kb.db"
+    postgres_url: "postgresql+asyncpg://vagus:vagus_password@localhost:5432/vagus_db"
   conversation_summarizer:
     enabled: true
     max_input_steps: 50
@@ -156,6 +160,9 @@ layer2:
     redis_url: null  # redis://localhost:6379/0 для Event Bus
     event_bus:
       enabled: true  # false чтобы отключить
+      use_streams: false  # true для Redis Streams (гарантированная доставка)
+      stream_name: vagus:events:stream
+      max_retries: 3
   blackboard:
     redis_url: null  # redis://localhost:6379/0 для production
     ttl_hours: 24

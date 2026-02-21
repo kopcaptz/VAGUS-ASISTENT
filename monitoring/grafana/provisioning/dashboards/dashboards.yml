@@ -1,5 +1,6 @@
 apiVersion: 1
 
+# Dashboards: overview.json, production_overview.json, api_performance.json, etc.
 providers:
   - name: "Vagus Dashboards"
     orgId: 1

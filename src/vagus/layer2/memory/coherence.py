@@ -36,9 +36,32 @@ class CoherenceMonitor:
         self,
         task_id: str,
         memory: "EpisodicMemory",
+        tenant_id: str = "default",
     ) -> str:
         """
-        Placeholder: возвращает пустую строку.
-        В Шаге 3.4: получить историю, суммаризировать, заменить старые шаги.
+        Получить историю, суммаризировать через LLM, заменить старые шаги одним summary-шагом.
+        Борется с Context Rot: сжимает длинную историю в краткое резюме.
         """
-        return ""
+        if not self.summarizer or not self.summarizer.enabled:
+            return ""
+
+        history = await memory.get_recent_history(
+            tenant_id, task_id, limit=self.threshold_steps
+        )
+        if not history:
+            return ""
+
+        summary = await self.summarizer.summarize(history)
+        if not summary:
+            return ""
+
+        memory.clear_task_history(task_id, tenant_id)
+        await memory.add_step_async(
+            tenant_id,
+            task_id,
+            "summarizer",
+            "summarize",
+            {"content": summary},
+            {"compressed": True},
+        )
+        return summary

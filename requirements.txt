@@ -22,11 +22,17 @@ rich>=13.0
 
 # Layer 3: Dashboard (optional)
 # pip install streamlit>=1.30
+networkx>=3.0
+plotly>=5.0
+streamlit-autorefresh>=0.0.1
 # UI smoke testing (optional)
 # pip install playwright>=1.46
 
 # Layer 3: Telegram Bot (optional)
 aiogram>=3.0
+
+# Load testing (optional)
+matplotlib>=3.7
 
 # Testing
 pytest>=7.0
@@ -41,3 +47,8 @@ chromadb>=0.4.0
 sentence-transformers>=2.2.0
 aiosqlite>=0.19.0
 redis[hiredis]>=5.0.0
+
+# PostgreSQL (optional, for future migrations / production)
+asyncpg>=0.29.0
+psycopg[binary]>=3.1.0
+alembic>=1.13.0

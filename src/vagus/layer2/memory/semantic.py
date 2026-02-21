@@ -3,8 +3,10 @@ SemanticMemory — векторное хранилище для долгосро
 Поиск похожих задач по эмбеддингам промптов.
 """
 
+import asyncio
 import hashlib
 import math
+import random
 import uuid
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Protocol, Tuple
 
@@ -55,6 +57,13 @@ def _cosine_similarity(a: List[float], b: List[float]) -> float:
     return min(1.0, max(0.0, dot))
 
 
+def _generate_embedding(text: str) -> List[float]:
+    """Заглушка: возвращает нормализованный случайный вектор 384-dim."""
+    vec = [random.random() for _ in range(384)]
+    norm = math.sqrt(sum(x * x for x in vec))
+    return [x / norm for x in vec] if norm > 0 else vec
+
+
 class SemanticMemory:
     """
     Векторная память для поиска похожих задач.
@@ -67,6 +76,7 @@ class SemanticMemory:
         collection_name: str = "vagus_semantic_memory",
         chroma_client: Optional[Any] = None,
         chroma_path: Optional[str] = None,
+        persist_directory: Optional[str] = None,
     ):
         """
         Args:
@@ -74,7 +84,8 @@ class SemanticMemory:
                      По умолчанию — простой bag-of-words.
             collection_name: Имя коллекции (для ChromaDB, если используется)
             chroma_client: Готовый клиент ChromaDB (опционально)
-            chroma_path: Путь для PersistentClient ChromaDB (опционально)
+            chroma_path: Путь для PersistentClient ChromaDB (deprecated, используйте persist_directory)
+            persist_directory: Путь для PersistentClient ChromaDB (опционально)
         """
         self._embedder = embedder or _default_embed
         self._collection_name = collection_name
@@ -83,11 +94,17 @@ class SemanticMemory:
         self._chroma_client = None
         self._chroma_collection = None
         self._chroma_embed_with_sentence_transformer = False
+        self.persist_directory = persist_directory or chroma_path
+        self._client = chroma_client
+        self._collection = None
+        self._async_initialized = False
+        self._async_collection = None  # коллекция для async API (384-dim)
         self.logger = get_logger("layer2.memory.semantic")
 
         if chroma_client is None and chroma_path and chromadb is not None:
             try:
                 chroma_client = chromadb.PersistentClient(path=chroma_path)
+                self._client = chroma_client
             except Exception as exc:
                 self.logger.warning(
                     "Failed to initialize Chroma PersistentClient at %s: %s. Falling back to in-memory mode.",
@@ -96,6 +113,7 @@ class SemanticMemory:
                 )
 
         if chroma_client is not None:
+            self._client = chroma_client
             self._setup_chroma_backend(chroma_client)
 
     @property
@@ -140,6 +158,116 @@ class SemanticMemory:
             self._chroma_client = None
             self._chroma_collection = None
             self._chroma_embed_with_sentence_transformer = False
+
+    async def initialize(self) -> None:
+        """Инициализирует ChromaDB клиент и коллекцию (lazy)."""
+        if self._async_initialized:
+            return
+        if self._client is None and self.persist_directory and chromadb is not None:
+            try:
+                self._client = await asyncio.to_thread(
+                    chromadb.PersistentClient, path=self.persist_directory
+                )
+                self._setup_chroma_backend(self._client)
+            except Exception as exc:
+                self.logger.warning(
+                    "Failed to initialize Chroma at %s: %s. Using in-memory fallback.",
+                    self.persist_directory,
+                    exc,
+                )
+        client = self._client or self._chroma_client
+        if client is not None and chromadb is not None:
+            self._async_collection = await asyncio.to_thread(
+                client.get_or_create_collection,
+                name=f"{self._collection_name}_async",
+                metadata={"hnsw:space": "cosine"},
+            )
+        self._async_initialized = True
+
+    async def add_document_async(
+        self,
+        text: str,
+        metadata: dict,
+        embedding: Optional[List[float]] = None,
+    ) -> str:
+        """
+        Добавляет документ в коллекцию (async).
+        metadata должен содержать tenant_id.
+
+        Returns:
+            doc_id — UUID документа
+        """
+        await self.initialize()
+        if "tenant_id" not in metadata:
+            raise ValueError("metadata must contain 'tenant_id'")
+        doc_id = str(uuid.uuid4())
+        emb = embedding if embedding is not None else _generate_embedding(text)
+
+        if self._async_collection is not None:
+            meta_ser = {}
+            for k, v in metadata.items():
+                if isinstance(v, (str, int, float, bool)):
+                    meta_ser[k] = v
+                else:
+                    meta_ser[k] = str(v)
+
+            def _add() -> None:
+                self._async_collection.add(
+                    ids=[doc_id],
+                    documents=[text],
+                    metadatas=[meta_ser],
+                    embeddings=[emb],
+                )
+
+            await asyncio.to_thread(_add)
+        else:
+            self._storage[doc_id] = {
+                "text": text,
+                "embedding": emb,
+                "metadata": metadata,
+                "task_id": metadata.get("task_id", doc_id),
+            }
+        return doc_id
+
+    async def search_async(
+        self, query: str, tenant_id: str, top_k: int = 5
+    ) -> List[dict]:
+        """
+        Ищет документы с фильтром tenant_id.
+
+        Returns:
+            Список [{"text": ..., "metadata": ...}, ...]
+        """
+        await self.initialize()
+        if self._async_collection is not None:
+
+            def _query() -> Any:
+                return self._async_collection.query(
+                    query_embeddings=[_generate_embedding(query)],
+                    n_results=top_k,
+                    where={"tenant_id": tenant_id},
+                    include=["documents", "metadatas"],
+                )
+
+            result = await asyncio.to_thread(_query)
+            docs = result.get("documents", [[]])[0] or []
+            metas = result.get("metadatas", [[]])[0] or []
+            return [
+                {"text": doc or "", "metadata": meta or {}}
+                for doc, meta in zip(docs, metas)
+            ]
+
+        if not self._storage:
+            return []
+        query_vec = _generate_embedding(query)
+        scored: List[tuple[float, str, Dict[str, Any]]] = []
+        for doc_id, record in self._storage.items():
+            if record.get("metadata", {}).get("tenant_id") != tenant_id:
+                continue
+            score = _cosine_similarity(query_vec, record["embedding"])
+            scored.append((score, record["text"], record["metadata"]))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [{"text": t, "metadata": m} for _, t, m in scored[:top_k]]
 
     @staticmethod
     def _distance_to_score(distance: Optional[float]) -> float:
@@ -384,15 +512,23 @@ class SemanticMemory:
 
         return "\n---\n".join(parts)
 
-    def add_task(self, task_id: str, prompt: str, result: Any, task_type: str = "default") -> str:
+    def add_task(
+        self,
+        task_id: str,
+        prompt: str,
+        result: Any,
+        task_type: str = "default",
+        tenant_id: str = "default",
+    ) -> str:
         """
         Удобный метод: добавляет задачу с промптом и результатом.
         Интеграция с EpisodicMemory — результат можно взять из last_step.
+        tenant_id требуется для search_async.
         """
         return self.add_embedding(
             task_id=task_id,
             text=prompt,
-            metadata={"result": result, "task_type": task_type},
+            metadata={"result": result, "task_type": task_type, "tenant_id": tenant_id},
         )
 
 
@@ -402,6 +538,7 @@ def sync_episodic_to_semantic(
     task_id: str,
     prompt: str,
     task_type: str = "default",
+    tenant_id: str = "default",
 ) -> Optional[str]:
     """
     Синхронизация: после выполнения задачи добавляет её в SemanticMemory.
@@ -413,15 +550,22 @@ def sync_episodic_to_semantic(
         task_id: Идентификатор задачи
         prompt: Промпт задачи
         task_type: Тип задачи
+        tenant_id: Идентификатор tenant
 
     Returns:
         embedding_id или None если нет результата
     """
-    last = episodic.get_last_step(task_id)
+    last = episodic.get_last_step(task_id, tenant_id)
     if not last:
         return None
     result = last.get("result", {})
-    return semantic.add_task(task_id=task_id, prompt=prompt, result=result, task_type=task_type)
+    return semantic.add_task(
+        task_id=task_id,
+        prompt=prompt,
+        result=result,
+        task_type=task_type,
+        tenant_id=tenant_id,
+    )
 
 
 __all__ = ["SemanticMemory", "EmbedderProtocol", "_default_embed", "sync_episodic_to_semantic"]

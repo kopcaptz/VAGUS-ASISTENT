@@ -43,6 +43,29 @@ def _make_mock_orchestrator():
     orchestrator.execute_task = AsyncMock(
         return_value={"content": "Test result", "metadata": {"agent": "researcher"}}
     )
+    orchestrator.event_bus = MagicMock()
+    orchestrator.event_bus.uses_streams = False
+    orchestrator.event_bus._streams_client = None
+
+    mock_artifact_kb = AsyncMock()
+    mock_artifact_kb.get_relationships_for_graph = AsyncMock(return_value=[])
+    mock_artifact_kb._pool = None
+    mock_artifact_kb._conn = None
+    mock_memory_manager = MagicMock()
+    mock_memory_manager._artifact_kb = mock_artifact_kb
+    mock_memory_manager.artifact_kb = mock_artifact_kb
+    orchestrator.memory_manager = mock_memory_manager
+
+    mock_synaptic = MagicMock()
+    mock_synaptic.get_stats.return_value = {
+        "buffer_size": 0,
+        "buffer_size_max": 50,
+        "events_processed": 0,
+        "flush_count": 0,
+        "flush_history": [],
+    }
+    orchestrator.synaptic_handler = mock_synaptic
+
     return orchestrator
 
 
@@ -67,9 +90,11 @@ def app(tmp_path):
         agents_router,
         auth_router,
         keys_router,
+        monitoring_router,
         plugins_router,
         status_router,
         tasks_router,
+        websocket_events_router,
     )
 
     configure_structured_logging(force=True)
@@ -84,6 +109,8 @@ def app(tmp_path):
     test_app.include_router(admin_router, prefix="/api/v1")
     test_app.include_router(plugins_router, prefix="/api/v1")
     test_app.include_router(keys_router, prefix="/api/v1")
+    test_app.include_router(monitoring_router, prefix="/api/v1")
+    test_app.include_router(websocket_events_router)
     test_app.include_router(metrics_router)
     test_app.include_router(health_router)
 

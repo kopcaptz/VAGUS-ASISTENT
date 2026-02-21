@@ -3,6 +3,7 @@
 Дополнено hot-reload на основе рекомендаций GPT.
 """
 
+import os
 import yaml
 import time
 import threading
@@ -84,6 +85,16 @@ class ConfigManager:
         else:
             print(f"[WARN] Файл .env не найден: {self.env_path}")
     
+    def _expand_env_vars(self, obj: Any) -> Any:
+        """Рекурсивно подставляет ${VAR} из переменных окружения в строковые значения."""
+        if isinstance(obj, dict):
+            return {k: self._expand_env_vars(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [self._expand_env_vars(v) for v in obj]
+        if isinstance(obj, str):
+            return os.path.expandvars(obj)
+        return obj
+
     def _load_yaml(self) -> Dict[str, Any]:
         """Загружает YAML конфигурацию."""
         if not self.config_path.exists():
@@ -92,7 +103,8 @@ class ConfigManager:
         with open(self.config_path, 'r', encoding='utf-8') as f:
             data = yaml.safe_load(f)
         
-        return data or {}
+        data = data or {}
+        return self._expand_env_vars(data)
     
     def _inject_secrets(self, config_data: Dict[str, Any]) -> Dict[str, Any]:
         """Внедряет секреты в конфигурацию через SecretsManager."""
@@ -276,10 +288,18 @@ class ConfigManager:
                     "db_path": "data/procedural.db",
                     "similarity_threshold": 0.7,
                 },
+                "knowledge_base": {
+                    "backend": "sqlite",
+                    "sqlite_path": "data/artifact_kb.db",
+                    "postgres_url": "postgresql+asyncpg://vagus:vagus_password@localhost:5432/vagus_db",
+                },
                 "communication": {
                     "redis_url": None,
                     "event_bus": {
                         "enabled": True,
+                        "use_streams": False,
+                        "stream_name": "vagus:events:stream",
+                        "max_retries": 3,
                     },
                 },
                 "blackboard": {

@@ -21,7 +21,11 @@ from .types import AgentContext, AgentMetadata, AgentResult, AgentTask, MultiSte
 from ..layer0.logging import get_logger
 
 if TYPE_CHECKING:
+    from .memory.coherence import CoherenceMonitor
+    from .memory.consolidation_handler import MemoryConsolidationHandler
+    from .memory.synaptic_handler import SynapticTrainingHandler
     from .memory.episodic import EpisodicMemory
+    from .memory.manager import MemoryManager
     from .memory.procedural import ProceduralMemory
     from .memory.summarizer import ConversationSummarizer
     from .memory.semantic import SemanticMemory
@@ -1106,6 +1110,10 @@ class MasterOrchestrator:
         event_bus: Optional[CommunicationLayer] = None,
         procedural_memory: Optional["ProceduralMemory"] = None,
         conversation_summarizer: Optional["ConversationSummarizer"] = None,
+        memory_manager: Optional["MemoryManager"] = None,
+        coherence_monitor: Optional["CoherenceMonitor"] = None,
+        memory_consolidation_handler: Optional["MemoryConsolidationHandler"] = None,
+        synaptic_handler: Optional["SynapticTrainingHandler"] = None,
         config: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.llm_router = llm_router
@@ -1116,19 +1124,26 @@ class MasterOrchestrator:
         self.event_bus = event_bus
         self.procedural_memory = procedural_memory
         self.conversation_summarizer = conversation_summarizer
+        self.memory_manager = memory_manager
+        self.coherence_monitor = coherence_monitor
+        self.memory_consolidation_handler = memory_consolidation_handler
+        self.synaptic_handler = synaptic_handler
         self.config = config or {}
         self.logger = get_logger("layer2.master_orchestrator")
 
-    def _event_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Добавляет trace_id в payload для отслеживания в Event Bus."""
+    def _event_payload(self, payload: Dict[str, Any], api_task_id: Optional[str] = None) -> Dict[str, Any]:
+        """Добавляет trace_id и опционально api_task_id в payload для Event Bus."""
+        result = dict(payload)
+        if api_task_id:
+            result["api_task_id"] = api_task_id
         try:
             from ..logging import get_trace_id
             tid = get_trace_id()
             if tid:
-                return {**payload, "trace_id": tid}
+                result["trace_id"] = tid
         except Exception:
             pass
-        return payload
+        return result
 
     def _result_has_error(self, result: Any) -> bool:
         if not isinstance(result, dict):
@@ -1139,20 +1154,29 @@ class MasterOrchestrator:
             return True
         return False
 
+    async def _perform_memory_lookup(
+        self, task: dict, tenant_id: str
+    ) -> dict:
+        """Единый lookup: SemanticMemory + ProceduralMemory через MemoryManager."""
+        if not self.memory_manager:
+            return {"history": [], "relevant_knowledge": [], "similar_plans": []}
+        return await self.memory_manager.get_context_for_task(task, tenant_id)
+
     async def execute_task(
         self, task_id: str, prompt: str, task_type: Optional[str] = None
     ) -> AgentResult:
         """
         API-совместимый интерфейс: делегирует в process_request.
         task_type игнорируется — MasterOrchestrator сам определяет intent.
+        api_task_id передаётся в событийный поток для связи с WebSocket /ws/tasks/{id}.
         """
-        result = await self.process_request(prompt)
+        result = await self.process_request(prompt, api_task_id=task_id)
         if isinstance(result, dict) and "metadata" in result:
             meta = result.get("metadata") or {}
             result = {**result, "metadata": {**meta, "task_id": task_id}}
         return result
 
-    async def process_request(self, user_input: str) -> AgentResult:
+    async def process_request(self, user_input: str, api_task_id: Optional[str] = None) -> AgentResult:
         """
         Обрабатывает запрос пользователя: classify -> plan -> execute -> synthesize.
         """
@@ -1176,6 +1200,21 @@ class MasterOrchestrator:
             intent_result.get("primary_intent"),
             intent_result.get("complexity"),
             intent_result.get("confidence", 0),
+        )
+
+        tenant_id = self.config.get("tenant_id", "default")
+        from .memory.procedural import intent_to_summary
+        task_for_lookup = {
+            "task_id": "pending",
+            "description": user_input or "",
+            "intent_summary": intent_to_summary(intent_result),
+        }
+        memory_context = await self._perform_memory_lookup(task_for_lookup, tenant_id)
+        self.logger.debug(
+            "memory_lookup: history=%d knowledge=%d similar_plans=%d",
+            len(memory_context.get("history", [])),
+            len(memory_context.get("relevant_knowledge", [])),
+            len(memory_context.get("similar_plans", [])),
         )
 
         plan: TaskPlan
@@ -1209,8 +1248,9 @@ class MasterOrchestrator:
         if self.event_bus:
             await self.event_bus.publish_event(
                 "task.planned",
-                self._event_payload({"plan_id": plan_id, "steps": [s.get("step_id") for s in steps], "execution_mode": plan.get("execution_mode")}),
+                self._event_payload({"plan_id": plan_id, "steps": [s.get("step_id") for s in steps], "execution_mode": plan.get("execution_mode")}, api_task_id=api_task_id),
                 task_id=plan_id,
+                tenant_id=tenant_id,
             )
 
         step_by_id = {s["step_id"]: s for s in plan.get("steps", [])}
@@ -1235,8 +1275,9 @@ class MasterOrchestrator:
                 if self.event_bus:
                     await self.event_bus.publish_event(
                         "task.failed",
-                        self._event_payload({"step_id": step_id, "agent_type": agent_type, "error": f"No agent for {agent_type}"}),
+                        self._event_payload({"step_id": step_id, "agent_type": agent_type, "error": f"No agent for {agent_type}"}, api_task_id=api_task_id),
                         task_id=task_id_skip,
+                        tenant_id=tenant_id,
                     )
                 await self.shared_blackboard.write(
                     plan_id,
@@ -1271,8 +1312,9 @@ class MasterOrchestrator:
             if self.event_bus:
                 await self.event_bus.publish_event(
                     "agent.started",
-                    self._event_payload({"step_id": step_id, "agent_type": agent_type, "artefact_key": artefact_key}),
+                    self._event_payload({"step_id": step_id, "agent_type": agent_type, "artefact_key": artefact_key}, api_task_id=api_task_id),
                     task_id=task_id,
+                    tenant_id=tenant_id,
                 )
 
             try:
@@ -1283,32 +1325,88 @@ class MasterOrchestrator:
                 if self.event_bus:
                     await self.event_bus.publish_event(
                         "task.failed",
-                        self._event_payload({"step_id": step_id, "agent_type": agent_type, "error": str(exc)}),
+                        self._event_payload({"step_id": step_id, "agent_type": agent_type, "error": str(exc)}, api_task_id=api_task_id),
                         task_id=task_id,
+                        tenant_id=tenant_id,
                     )
 
             if self.event_bus:
                 await self.event_bus.publish_event(
                     "agent.finished",
-                    self._event_payload({"step_id": step_id, "agent_type": agent_type, "has_error": self._result_has_error(result)}),
+                    self._event_payload({"step_id": step_id, "agent_type": agent_type, "has_error": self._result_has_error(result)}, api_task_id=api_task_id),
                     task_id=task_id,
+                    tenant_id=tenant_id,
                 )
 
             await self.shared_blackboard.write(plan_id, artefact_key, result)
+
+            current_artifact_id: Optional[str] = None
+            dep_artifact_ids: List[str] = []
+            if self.memory_manager and self.memory_manager.artifact_kb and not self._result_has_error(result):
+                try:
+                    content = result.get("content", str(result)) if isinstance(result, dict) else str(result)
+                    if content:
+                        current_artifact_id = await self.memory_manager.save_artifact(
+                            content=content,
+                            artifact_type=agent_type,
+                            source_step=step_id,
+                            tenant_id=tenant_id,
+                            plan_id=plan_id,
+                            key=artefact_key,
+                        )
+                    for dep_id in step.get("depends_on", []):
+                        dep_step = step_by_id.get(dep_id)
+                        if dep_step:
+                            dep_key = dep_step.get("artefact_key")
+                            if dep_key:
+                                aid = await self.memory_manager.artifact_kb.get_artifact_id_by_plan_key(
+                                    tenant_id, plan_id, dep_key
+                                )
+                                if aid:
+                                    dep_artifact_ids.append(aid)
+                except Exception as exc:
+                    self.logger.debug("Failed to save artifact for quality_gate: %s", exc)
+
+            if self.memory_manager:
+                await self.memory_manager.save_episodic_step(
+                    tenant_id=tenant_id,
+                    task_id=plan_id,
+                    agent_type=agent_type,
+                    action="process",
+                    result=result,
+                    metadata={"step_id": step_id, "artefact_key": artefact_key},
+                )
+                if self.coherence_monitor:
+                    history = await self.memory_manager.episodic.get_recent_history(
+                        tenant_id, plan_id, limit=100
+                    )
+                    if await self.coherence_monitor.should_summarize(len(history)):
+                        await self.coherence_monitor.summarize_and_replace(
+                            plan_id, self.memory_manager.episodic, tenant_id
+                        )
 
             if self._result_has_error(result):
                 self.logger.warning("Step %s returned error: %s", step_id, result.get("error"))
                 if self.event_bus:
                     await self.event_bus.publish_event(
                         "task.failed",
-                        self._event_payload({"step_id": step_id, "agent_type": agent_type, "error": result.get("error", "Unknown")}),
+                        self._event_payload({"step_id": step_id, "agent_type": agent_type, "error": result.get("error", "Unknown")}, api_task_id=api_task_id),
                         task_id=task_id,
+                        tenant_id=tenant_id,
                     )
             elif self.event_bus:
+                qg_payload = {
+                    "step_id": step_id,
+                    "agent_type": agent_type,
+                    "artefact_key": artefact_key,
+                    "artifact_id": current_artifact_id,
+                    "dep_artifact_ids": dep_artifact_ids,
+                }
                 await self.event_bus.publish_event(
                     "quality_gate.passed",
-                    self._event_payload({"step_id": step_id, "agent_type": agent_type, "artefact_key": artefact_key}),
+                    self._event_payload(qg_payload, api_task_id=api_task_id),
                     task_id=task_id,
+                    tenant_id=tenant_id,
                 )
 
         artefacts = await self.shared_blackboard.read_all(plan_id)
@@ -1322,27 +1420,42 @@ class MasterOrchestrator:
 
         self.logger.info("process_request: plan_id=%s artefacts_count=%d", plan_id, len(artefacts))
 
+        has_error = any(
+            isinstance(v, dict) and v.get("error")
+            for v in artefacts.values()
+            if v is not None
+        )
+        success = not has_error and bool(final_content and final_content != "No results produced.")
+        task_completed_payload = self._event_payload({
+            "plan_id": plan_id,
+            "artefacts": list(artefacts.keys()),
+            "content_length": len(final_content),
+            "task_id": plan_id,
+            "prompt": user_input or "",
+            "intent_summary": intent_to_summary(intent_result),
+            "plan_json": json.dumps(plan, ensure_ascii=False, default=str),
+            "success": success,
+        }, api_task_id=api_task_id)
         if self.event_bus:
             await self.event_bus.publish_event(
                 "task.completed",
-                self._event_payload({"plan_id": plan_id, "artefacts": list(artefacts.keys()), "content_length": len(final_content)}),
+                task_completed_payload,
                 task_id=plan_id,
+                tenant_id=tenant_id,
             )
 
-        if self.procedural_memory and self.procedural_memory.enabled:
-            has_error = any(
-                isinstance(v, dict) and v.get("error")
-                for v in artefacts.values()
-                if v is not None
+        # Прямой вызов consolidation только при Pub/Sub или in-memory; при Streams — через Event Bus
+        if self.memory_consolidation_handler and not getattr(self.event_bus, "uses_streams", False):
+            await self.memory_consolidation_handler.handle_task_completed(
+                {
+                    "task_id": plan_id,
+                    "prompt": user_input or "",
+                    "intent_summary": intent_to_summary(intent_result),
+                    "plan_json": json.dumps(plan, ensure_ascii=False, default=str),
+                    "success": success,
+                },
+                tenant_id,
             )
-            if not has_error and final_content and final_content != "No results produced.":
-                from .memory.procedural import intent_to_summary
-                intent_summary = intent_to_summary(intent_result)
-                try:
-                    await self.procedural_memory.save_plan(plan, intent_summary, success_score=1.0)
-                    self.logger.debug("Saved plan to ProceduralMemory")
-                except Exception as exc:
-                    self.logger.warning("Failed to save plan to ProceduralMemory: %s", exc)
 
         return {
             "content": final_content or "No results produced.",

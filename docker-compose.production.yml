@@ -1,0 +1,98 @@
+# Vagus Asistent - production stack
+# Запуск: docker-compose -f docker-compose.production.yml up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: vagus-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vagus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vagus_password}
+      POSTGRES_DB: ${POSTGRES_DB:-vagus_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vagus} -d ${POSTGRES_DB:-vagus_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: vagus-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  migrations:
+    build:
+      context: .
+      target: api
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app/src
+      - VAGUS_DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-vagus}:${POSTGRES_PASSWORD:-vagus_password}@postgres:5432/${POSTGRES_DB:-vagus_db}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+
+  api:
+    build:
+      context: .
+      target: api
+    container_name: vagus-api
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app/src
+      - VAGUS_CONFIG_PATH=/app/configs/vagus.production.yaml
+      - POSTGRES_USER=${POSTGRES_USER:-vagus}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-vagus_password}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=${POSTGRES_DB:-vagus_db}
+      - REDIS_HOST=redis
+    volumes:
+      - ./configs:/app/configs:ro
+      - api_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  nginx:
+    image: nginx:alpine
+    container_name: vagus-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./configs/nginx.production.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  api_data:

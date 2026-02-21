@@ -27,8 +27,8 @@ from ..models import (
     TaskCreateRequest,
     TaskCreateResponse,
     TaskListItem,
+    TaskResponse,
     TaskStatus,
-    TaskStatusResponse,
     WebSocketAuditLogEntry,
 )
 from ..websocket_security import WebSocketAuditStorage, WebSocketRuntimeSettings
@@ -424,17 +424,24 @@ async def create_task(
     task_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
 
+    metadata: dict = {
+        "user": current_user.get("sub", "unknown"),
+        **(request.metadata or {}),
+    }
+    if request.goal is not None:
+        metadata["goal"] = request.goal
+
     task_store[task_id] = {
         "task_id": task_id,
         "status": TaskStatus.PENDING,
         "result": None,
         "error": None,
-        "metadata": {
-            "user": current_user.get("sub", "unknown"),
-            **(request.metadata or {}),
-        },
+        "metadata": metadata,
         "created_at": now,
         "updated_at": now,
+        "plan": None,
+        "quality_score": None,
+        "reflection_count": None,
     }
 
     asyncio.create_task(_run_task(task_id, request, orchestrator, app=http_request.app))
@@ -463,8 +470,12 @@ async def _run_task(task_id: str, request: TaskCreateRequest, orchestrator, app=
         has_error = False
         if isinstance(result, dict):
             metadata = result.get("metadata", {})
-            if isinstance(metadata, dict) and metadata.get("agent"):
-                agent_type = str(metadata.get("agent"))
+            if isinstance(metadata, dict):
+                if metadata.get("agent"):
+                    agent_type = str(metadata.get("agent"))
+                for key in ("plan", "quality_score", "reflection_count"):
+                    if key in metadata:
+                        task_store[task_id][key] = metadata[key]
             has_error = bool(result.get("error")) or result.get("success") is False
 
         if has_error:
@@ -509,16 +520,16 @@ async def _run_task(task_id: str, request: TaskCreateRequest, orchestrator, app=
         task_store[task_id]["updated_at"] = datetime.now(timezone.utc)
 
 
-@router.get("/{task_id}", response_model=TaskStatusResponse)
+@router.get("/{task_id}", response_model=TaskResponse)
 async def get_task_status(
     task_id: str,
     current_user: dict = Depends(get_current_user),
-) -> TaskStatusResponse:
-    """Возвращает статус и результат задачи."""
+) -> TaskResponse:
+    """Возвращает статус и результат задачи с plan, quality_score, reflection_count."""
     task = task_store.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
-    return TaskStatusResponse(**task)
+    return TaskResponse(**task)
 
 
 @router.get("", response_model=list[TaskListItem])
