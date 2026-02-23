@@ -1,5 +1,7 @@
 """Basic plugin template."""
 
+from vagus.plugins.models import PluginLifecycleState  # Добавлен импорт
+
 
 class Plugin:
     """Minimal plugin entry point."""

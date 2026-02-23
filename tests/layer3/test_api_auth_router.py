@@ -6,7 +6,7 @@ import pytest
 def test_login_success(client):
     resp = client.post(
         "/api/v1/auth/token",
-        json={"username": "admin", "password": "admin"},
+        json={"username": "admin", "password": "testpassword"},
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -34,7 +34,7 @@ def test_login_unknown_user(client):
 def test_refresh_token_success(client):
     login_resp = client.post(
         "/api/v1/auth/token",
-        json={"username": "admin", "password": "admin"},
+        json={"username": "admin", "password": "testpassword"},
     )
     refresh_tok = login_resp.json()["refresh_token"]
 

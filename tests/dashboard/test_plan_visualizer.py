@@ -16,8 +16,9 @@ def test_render_plan_with_empty_plan_does_not_raise():
     """render_plan с пустым планом не вызывает исключений."""
     from dashboard.components.plan_visualizer import render_plan
 
-    with patch("dashboard.components.plan_visualizer.st") as mock_st:
-        mock_st.STREAMLIT_AVAILABLE = True
+    with patch("streamlit.subheader") as mock_subheader, \
+         patch("streamlit.dataframe") as mock_dataframe, \
+         patch("streamlit.write") as mock_write:
         render_plan(None)
         render_plan({})
         render_plan({"steps": []})
@@ -41,12 +42,13 @@ def test_render_plan_with_valid_plan_calls_streamlit():
         ],
         "execution_mode": "sequential",
     }
-    with patch("dashboard.components.plan_visualizer.st") as mock_st:
-        mock_st.STREAMLIT_AVAILABLE = True
+    with patch("streamlit.subheader") as mock_subheader, \
+         patch("streamlit.dataframe") as mock_dataframe, \
+         patch("streamlit.write") as mock_write:
         render_plan(plan)
-        mock_st.subheader.assert_called_once_with("План выполнения")
-        mock_st.dataframe.assert_called_once()
-        call_args = mock_st.dataframe.call_args[0][0]
+        mock_subheader.assert_called_once_with("План выполнения")
+        mock_dataframe.assert_called_once()
+        call_args = mock_dataframe.call_args[0][0]
         assert len(call_args) == 1
         assert call_args[0]["Step ID"] == "s1"
         assert call_args[0]["Agent"] == "coder"

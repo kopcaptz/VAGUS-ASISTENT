@@ -152,22 +152,30 @@ def test_plugin_install_from_marketplace(plugin_cli_env, tmp_path: Path, monkeyp
     cleanup_dir.mkdir(parents=True, exist_ok=True)
     _create_test_plugin(plugin_dir, name="market_plugin")
 
-    monkeypatch.setattr(
-        plugin_commands.MarketplaceClient,
-        "get_plugin_details",
-        lambda self, _plugin_id: {
+    # Исправленные моки MarketplaceClient
+    def mock_get_plugin_details(self, plugin_id):
+        return {
             "plugin_id": "market-plugin",
             "name": "Market Plugin",
             "download_url": "https://marketplace.local/plugin.zip",
-        },
+        }
+    
+    def mock_get_plugin_versions(self, plugin_id):
+        return [
+            {"version": "1.2.3", "download_url": "https://marketplace.local/plugin-1.2.3.zip"}
+        ]
+    
+    monkeypatch.setattr(
+        plugin_commands.MarketplaceClient,
+        "get_plugin_details",
+        mock_get_plugin_details,
     )
     monkeypatch.setattr(
         plugin_commands.MarketplaceClient,
         "get_plugin_versions",
-        lambda self, _plugin_id: [
-            {"version": "1.2.3", "download_url": "https://marketplace.local/plugin-1.2.3.zip"}
-        ],
+        mock_get_plugin_versions,
     )
+    
     monkeypatch.setattr(
         plugin_commands,
         "_download_and_extract_plugin_from_url",
