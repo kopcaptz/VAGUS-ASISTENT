@@ -21,7 +21,6 @@ from .agents.researcher import ResearcherAgent
 from .dead_letter_queue import DeadLetterQueueStorage
 from .intent_classifier import IntentClassifier, IntentResult, create_intent_classifier
 from .memory import (
-        LessonsMemory,
     ConversationSummarizer,
     EpisodicMemory,
     ProceduralMemory,
@@ -115,17 +114,14 @@ def create_master_orchestrator_full(
     event_bus = create_communication_from_config(layer2)
     conversation_summarizer = create_conversation_summarizer_from_config(llm_router, layer2)
     from .memory import (
-        LessonsMemory,
         CoherenceMonitor,
         MemoryConsolidationHandler,
         MemoryManager,
         SynapticTrainingHandler,
         create_artifact_kb_from_config,
-        create_lessons_memory_from_config,
     )
 
     artifact_kb = create_artifact_kb_from_config(layer2)
-    lessons_memory = create_lessons_memory_from_config(layer2)
     memory_manager = MemoryManager(
         procedural_memory=procedural_memory,
         artifact_kb=artifact_kb,
@@ -165,7 +161,6 @@ def create_master_orchestrator_full(
         coherence_monitor=coherence_monitor,
         memory_consolidation_handler=memory_consolidation_handler,
         synaptic_handler=synaptic_handler,
-        lessons_memory=lessons_memory,
         config=layer2.get("master_orchestrator"),
     )
 

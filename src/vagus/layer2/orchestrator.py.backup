@@ -303,7 +303,6 @@ class TaskOrchestrator:
         *,
         task_id: str,
         timeout_seconds: float,
-        tenant_id: str = "default",
         coroutine_factory,
     ):
         if self._distributed_lock is None:
@@ -513,7 +512,6 @@ class TaskOrchestrator:
         task: AgentTask,
         result: AgentResult,
         timeout_seconds: float,
-        tenant_id: str = "default",
     ) -> tuple[AgentResult, List[Dict[str, Any]]]:
         """Reflexion loop: evaluate -> reflect -> retry up to max_reflection_iterations."""
         meta = metadata or {}
@@ -628,30 +626,6 @@ class TaskOrchestrator:
             "Task %s: reflexion completed, best_score=%.2f, attempts=%d",
             task_id, best[1], len(attempts),
         )
-        # Save lesson to LessonsMemory if reflexion improved the result
-        if self.lessons_memory and evaluated:
-            try:
-                best_score = best[1]
-                first_score = evaluated[0][1] if evaluated else 0.0
-                if best_score > first_score:
-                    # Get refined prompt from last iteration
-                    refined_prompt = current_result.get("content", "") if hasattr(current_result, "get") else str(current_result)
-                    issues = [{"issue": f"Initial score {first_score:.2f} below threshold", "iteration": 0}]
-                    suggestions = [{"suggestion": "Applied reflexion loop to improve result", "final_score": best_score}]
-                    await self.lessons_memory.save_lesson(
-                        tenant_id=tenant_id,
-                        original_prompt=prompt,
-                        agent_type=task_type or "unknown",
-                        issues=issues,
-                        suggestions=suggestions,
-                        refined_prompt=refined_prompt,
-                        score_before=first_score,
-                        score_after=best_score,
-                    )
-                    self.logger.info("Task %s: saved lesson to LessonsMemory", task_id)
-            except Exception as e:
-                self.logger.warning("Task %s: failed to save lesson: %s", task_id, e)
-
         return (best[0], attempts)
 
     async def _apply_graceful_degradation(
@@ -786,7 +760,6 @@ class TaskOrchestrator:
             result = await self._execute_with_distributed_lock(
                 task_id=task_id,
                 timeout_seconds=timeout_seconds,
-                tenant_id=tenant_id,
                 coroutine_factory=lambda: asyncio.wait_for(
                     agent.process(task),
                     timeout=timeout_seconds,
@@ -824,7 +797,6 @@ class TaskOrchestrator:
                 task=task,
                 result=result,
                 timeout_seconds=timeout_seconds,
-                tenant_id=tenant_id,
             )
             if reflexion_attempts:
                 meta = result.get("metadata") or {}
@@ -999,7 +971,6 @@ class TaskOrchestrator:
                 result = await self._execute_with_distributed_lock(
                     task_id=step_task_id,
                     timeout_seconds=timeout_seconds,
-                tenant_id=tenant_id,
                     coroutine_factory=lambda: asyncio.wait_for(
                         agent.process(task, context=context),
                         timeout=timeout_seconds,
@@ -1143,7 +1114,6 @@ class MasterOrchestrator:
         coherence_monitor: Optional["CoherenceMonitor"] = None,
         memory_consolidation_handler: Optional["MemoryConsolidationHandler"] = None,
         synaptic_handler: Optional["SynapticTrainingHandler"] = None,
-        lessons_memory: Optional["LessonsMemory"] = None,
         config: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.llm_router = llm_router
@@ -1158,7 +1128,6 @@ class MasterOrchestrator:
         self.coherence_monitor = coherence_monitor
         self.memory_consolidation_handler = memory_consolidation_handler
         self.synaptic_handler = synaptic_handler
-        self.lessons_memory = lessons_memory
         self.config = config or {}
         self.logger = get_logger("layer2.master_orchestrator")
 
@@ -1241,22 +1210,6 @@ class MasterOrchestrator:
             "intent_summary": intent_to_summary(intent_result),
         }
         memory_context = await self._perform_memory_lookup(task_for_lookup, tenant_id)
-        # Find similar lessons from past reflections
-        lessons_context = []
-        if self.lessons_memory:
-            try:
-                intent_type = intent_result.get("primary_intent", "mixed")
-                similar_lessons = await self.lessons_memory.find_similar_lessons(
-                    tenant_id=tenant_id,
-                    original_prompt=user_input or "",
-                    agent_type=intent_type,
-                    limit=3,
-                )
-                if similar_lessons:
-                    lessons_context = similar_lessons
-                    self.logger.info("Found %d similar lessons for tenant %s", len(similar_lessons), tenant_id)
-            except Exception as e:
-                self.logger.warning("Failed to find similar lessons: %s", e)
         self.logger.debug(
             "memory_lookup: history=%d knowledge=%d similar_plans=%d",
             len(memory_context.get("history", [])),

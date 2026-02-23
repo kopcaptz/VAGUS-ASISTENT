@@ -44,7 +44,6 @@ __all__: list[str] = [
     "intent_to_summary",
     "sync_episodic_to_semantic",
     "create_artifact_kb_from_config",
-    "create_lessons_memory_from_config",
 ]
 
 
@@ -101,3 +100,36 @@ def create_lessons_memory_from_config(
     )
 
 
+def create_lessons_memory_from_config(
+    layer2_config: dict | None,
+) -> LessonsMemory:
+    """
+    Создаёт LessonsMemory из layer2.lessons_memory.
+    """
+    lessons_cfg = (layer2_config or {}).get("lessons_memory") or {}
+    if not isinstance(lessons_cfg, dict):
+        # Default to in‑memory only (no persistent storage)
+        return LessonsMemory(
+            postgres_url="postgresql+asyncpg://vagus:vagus_password@localhost:5432/vagus_db",
+            fallback_enabled=True,
+        )
+    
+    # Use the same PostgreSQL URL as artifact_kb if not specified
+    postgres_url = lessons_cfg.get("postgres_url")
+    if not postgres_url:
+        # Try to get from knowledge_base config
+        kb_cfg = (layer2_config or {}).get("knowledge_base") or {}
+        if isinstance(kb_cfg, dict) and kb_cfg.get("backend") == "postgres":
+            postgres_url = kb_cfg.get("postgres_url")
+    
+    if not postgres_url:
+        postgres_url = "postgresql+asyncpg://vagus:vagus_password@localhost:5432/vagus_db"
+    
+    fallback_enabled = lessons_cfg.get("fallback_enabled", True)
+    fallback_max_entries = lessons_cfg.get("fallback_max_entries", 1000)
+    
+    return LessonsMemory(
+        postgres_url=postgres_url,
+        fallback_enabled=fallback_enabled,
+        fallback_max_entries=fallback_max_entries,
+    )
