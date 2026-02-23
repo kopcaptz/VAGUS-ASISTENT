@@ -2,7 +2,7 @@
 # Vagus Asistent — шаблон конфигурации
 # =============================================================================
 # Скопируйте в configs/vagus.yaml и настройте под своё окружение:
-#   copy configs\vagus.example.yaml configs\vagus.yaml
+#   copy configs\\vagus.example.yaml configs\\vagus.yaml
 #
 # ВАЖНО: configs/vagus.yaml может содержать чувствительные данные —
 #         он добавлен в .gitignore.
@@ -27,6 +27,34 @@ server:
   marketplace:
     host: 127.0.0.1
     port: 8010
+  websocket:
+    host: 0.0.0.0
+    port: 8001
+    max_message_size: 10485760  # 10MB
+    ping_interval: 30
+    ping_timeout: 10
+
+security:
+  cors_origins:
+    - "http://localhost:8501"
+    - "http://127.0.0.1:8501"
+  allowed_hosts:
+    - "localhost"
+    - "127.0.0.1"
+    - "*.local"
+  rate_limit:
+    requests_per_minute: 60
+    burst_size: 10
+
+jwt:
+  algorithm: "HS256"
+  access_token_expire_minutes: 30
+  refresh_token_expire_days: 7
+  secret_key: "${JWT_SECRET_KEY}"  # Установите переменную окружения
+
+secrets:
+  encryption_key: "${ENCRYPTION_KEY}"  # Установите переменную окружения
+  key_storage_backend: "file"  # или "postgres"
 
 plugins:
   enabled: true
@@ -61,6 +89,34 @@ plugins:
     url: "https://plugins.vagus.ai"
     cache_ttl_hours: 24
 
+providers:
+  openai:
+    endpoint: "https://api.openai.com/v1"
+    rate_limit: 60
+    timeout: 30
+    enabled: true
+    models: ["gpt-4o", "gpt-4o-mini"]
+  anthropic:
+    endpoint: "https://api.anthropic.com/v1"
+    rate_limit: 40
+    timeout: 30
+    enabled: true
+    models: ["claude-3-5-sonnet-20241022"]
+  openrouter:
+    endpoint: "https://openrouter.ai/api/v1"
+    rate_limit: 60
+    timeout: 30
+    enabled: true
+    models: ["moonshotai/kimi-k2.5"]
+
+task_timeouts:
+  researcher: 300
+  coder: 600
+  analyst: 180
+  evaluator: 120
+  reflection: 180
+  default: 300
+
 monitoring:
   memory_profiler:
     enabled: true
@@ -76,3 +132,30 @@ key_backup:
   encryption_password: null   # опционально: пароль для резервных копий
   backup_dir: "~/.vagus/backups"
   max_backups: 10
+
+layer2:
+  knowledge_base:
+    backend: "postgres"  # или "sqlite"
+    connection_string: "${DATABASE_URL}"  # Установите переменную окружения
+    pool_size: 10
+    max_overflow: 5
+  memory:
+    semantic:
+      enabled: true
+      backend: "chromadb"
+      embedding_model: "all-MiniLM-L6-v2"
+    episodic:
+      enabled: true
+      backend: "sqlite"
+      db_path: "./data/episodic_memory.db"
+    lessons:
+      enabled: true
+      similarity_threshold: 0.85
+      max_lessons_per_task: 3
+  event_bus:
+    backend: "redis"  # или "memory" для разработки
+    redis_url: "${REDIS_URL}"  # Установите переменную окружения
+    stream_maxlen: 10000
+  shared_blackboard:
+    backend: "redis"
+    ttl_seconds: 86400  # 24 часа

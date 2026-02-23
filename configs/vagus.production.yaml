@@ -134,10 +134,6 @@ layer1:
     backoff_factor: 2.0
     retryable_errors: ["timeout", "rate_limit", "network_error"]
 
-retry:
-  max_attempts: 5
-  backoff_factor: 2.0
-  retryable_errors: ["timeout", "rate_limit", "network_error"]
 
 task_timeouts:
   researcher: 300

@@ -68,7 +68,7 @@ services:
     container_name: vagus-postgres
     environment:
       POSTGRES_USER: vagus
-      POSTGRES_PASSWORD: vagus_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vagus_password}
       POSTGRES_DB: vagus_db
     ports:
       - "5432:5432"
