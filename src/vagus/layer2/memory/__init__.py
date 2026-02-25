@@ -5,7 +5,8 @@ ConversationSummarizer + CoherenceMonitor + MemoryManager.
 
 from .artifact_base import ArtifactKnowledgeBaseProtocol
 from .artifact_kb import ArtifactKnowledgeBase
-from .lessons import LessonsMemoryfrom .artifact_kb_pg import ArtifactKnowledgeBasePG
+from .lessons import LessonsMemory
+from .artifact_kb_pg import ArtifactKnowledgeBasePG
 from .coherence import CoherenceMonitor
 from .consolidation_handler import MemoryConsolidationHandler
 from .exceptions import (
